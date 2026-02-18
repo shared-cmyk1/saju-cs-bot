@@ -17,18 +17,8 @@ export async function GET(request: NextRequest) {
     return new NextResponse(challenge, { status: 200 });
   }
 
-  // 임시 디버그 (배포 후 삭제)
-  return NextResponse.json({
-    error: 'Forbidden',
-    debug: {
-      mode,
-      receivedToken: token,
-      expectedTokenLength: expectedToken?.length,
-      expectedTokenFirst5: expectedToken?.substring(0, 5),
-      receivedTokenFirst5: token?.substring(0, 5),
-      match: token === expectedToken,
-    },
-  }, { status: 403 });
+  console.warn('[Webhook] Verification failed', { mode });
+  return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
 // Instagram DM 이벤트 수신
