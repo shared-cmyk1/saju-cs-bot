@@ -47,7 +47,7 @@ export const messageService = {
 
     // 3. 사용자 메시지 저장
     const nextIndex = await this.getNextMessageIndex(conversation.id);
-    const { data: savedMessage } = await supabase
+    const { data: savedMessage, error: saveError } = await supabase
       .from('saju_cs_messages')
       .insert({
         conversation_id: conversation.id,
@@ -59,6 +59,10 @@ export const messageService = {
       })
       .select('id')
       .single();
+
+    if (saveError) {
+      console.error('[MessageService] Failed to save user message:', saveError);
+    }
 
     // 이미 에스컬레이션 대기 중이면 대기 메시지만 전송
     if (pendingEscalation) {
@@ -98,7 +102,10 @@ export const messageService = {
       });
 
       // Slack 에스컬레이션
-      if (savedMessage) {
+      if (!savedMessage) {
+        console.error('[MessageService] savedMessage is null, skipping escalation');
+      }
+      try {
         await postEscalation({
           escalationId: '',
           conversationId: conversation.id,
@@ -107,6 +114,9 @@ export const messageService = {
           userQuestion: messageText,
           aiSuggestedAnswer: aiResult.suggestedAnswer,
         });
+        console.log('[MessageService] Slack escalation posted successfully');
+      } catch (slackError) {
+        console.error('[MessageService] Slack escalation failed:', slackError);
       }
 
       console.log('[MessageService] Escalated:', {
