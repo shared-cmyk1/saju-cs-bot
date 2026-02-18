@@ -117,6 +117,18 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
   }
 }
 
+// 이미 에스컬레이션 진행 중인 대화에서 추가 메시지를 Slack에 전달
+export async function postFollowUpMessage(params: {
+  username?: string | null;
+  userQuestion: string;
+}): Promise<void> {
+  const channelId = getChannelId();
+  await slackAPI('chat.postMessage', {
+    channel: channelId,
+    text: `📩 추가 메시지 | @${params.username || '알 수 없음'}: "${params.userQuestion}"`,
+  });
+}
+
 // 에스컬레이션 메시지를 "답변 완료"로 업데이트
 export async function updateEscalationMessage(
   channel: string,

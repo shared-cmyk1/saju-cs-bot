@@ -1,7 +1,7 @@
 import { supabase } from '@/app/lib/supabase/client';
 import { loadFAQ } from '@/app/lib/faq/loader';
 import { generateResponse } from '@/app/lib/ai/csBot';
-import { postEscalation } from '@/app/lib/slack/slackClient';
+import { postEscalation, postFollowUpMessage } from '@/app/lib/slack/slackClient';
 import * as graphApi from './graphApi';
 import * as templates from './messageTemplates';
 import type { InstagramMessageEvent, Conversation, Message } from '@/app/lib/types';
@@ -47,6 +47,7 @@ export const messageService = {
 
     // 3. 사용자 메시지 저장
     const nextIndex = await this.getNextMessageIndex(conversation.id);
+    const isFirstMessage = nextIndex === 0;
     const { data: savedMessage, error: saveError } = await supabase
       .from('saju_cs_messages')
       .insert({
@@ -64,9 +65,12 @@ export const messageService = {
       console.error('[MessageService] Failed to save user message:', saveError);
     }
 
-    // 이미 에스컬레이션 대기 중이면 대기 메시지만 전송
+    // 이미 에스컬레이션 대기 중이면 유저에게 답장 없이 Slack에만 전달
     if (pendingEscalation) {
-      await graphApi.sendMessage(instagramUserId, templates.getPendingEscalationMessage());
+      await postFollowUpMessage({
+        username: conversation.instagram_username,
+        userQuestion: messageText,
+      });
       return;
     }
 
@@ -89,17 +93,18 @@ export const messageService = {
 
     // 7. 응답 분기
     if (aiResult.shouldEscalate) {
-      // 고객에게 대기 메시지 전송
-      await graphApi.sendMessage(instagramUserId, templates.getHoldingMessage());
+      // 첫 번째 DM에만 인사 메시지 전송
+      if (isFirstMessage) {
+        await graphApi.sendMessage(instagramUserId, templates.getHoldingMessage());
 
-      // 대기 메시지 DB 저장
-      await supabase.from('saju_cs_messages').insert({
-        conversation_id: conversation.id,
-        message_index: nextIndex + 1,
-        role: 'assistant',
-        content: templates.getHoldingMessage(),
-        source: 'ai',
-      });
+        await supabase.from('saju_cs_messages').insert({
+          conversation_id: conversation.id,
+          message_index: nextIndex + 1,
+          role: 'assistant',
+          content: templates.getHoldingMessage(),
+          source: 'ai',
+        });
+      }
 
       // Slack 에스컬레이션
       if (!savedMessage) {
