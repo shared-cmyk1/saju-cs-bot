@@ -1,0 +1,187 @@
+import { supabase } from '@/app/lib/supabase/client';
+import type { SlackEscalationParams } from '@/app/lib/types';
+
+function getSlackToken(): string {
+  const token = process.env.SLACK_BOT_TOKEN;
+  if (!token) throw new Error('Missing SLACK_BOT_TOKEN');
+  return token;
+}
+
+function getChannelId(): string {
+  const id = process.env.SLACK_CS_CHANNEL_ID;
+  if (!id) throw new Error('Missing SLACK_CS_CHANNEL_ID');
+  return id;
+}
+
+// Slack Web API 호출 헬퍼
+async function slackAPI(method: string, body: Record<string, unknown>) {
+  const response = await fetch(`https://slack.com/api/${method}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getSlackToken()}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await response.json();
+  if (!data.ok) {
+    console.error(`[Slack] ${method} failed:`, data.error);
+    throw new Error(`Slack API error: ${data.error}`);
+  }
+  return data;
+}
+
+// 에스컬레이션 메시지를 Slack에 포스트
+export async function postEscalation(params: SlackEscalationParams): Promise<void> {
+  const channelId = getChannelId();
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: 'CS 문의 에스컬레이션', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        {
+          type: 'mrkdwn',
+          text: `*고객:*\n@${params.username || '알 수 없음'}`,
+        },
+        {
+          type: 'mrkdwn',
+          text: '*상태:*\n:hourglass: 대기 중',
+        },
+      ],
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*질문:*\n>${params.userQuestion}`,
+      },
+    },
+    ...(params.aiSuggestedAnswer
+      ? [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*AI 추천 답변 (참고):*\n${params.aiSuggestedAnswer}`,
+            },
+          },
+        ]
+      : []),
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '답변하기', emoji: true },
+          style: 'primary',
+          action_id: 'open_response_modal',
+          value: JSON.stringify({
+            conversation_id: params.conversationId,
+            instagram_user_id: params.instagramUserId,
+          }),
+        },
+      ],
+    },
+  ];
+
+  const result = await slackAPI('chat.postMessage', {
+    channel: channelId,
+    text: `CS 에스컬레이션: @${params.username || '알 수 없음'} - "${params.userQuestion}"`,
+    blocks,
+  });
+
+  // DB에 에스컬레이션 레코드 생성
+  // user_message_id 조회 (가장 최근 user 메시지)
+  const { data: lastUserMsg } = await supabase
+    .from('saju_cs_messages')
+    .select('id')
+    .eq('conversation_id', params.conversationId)
+    .eq('role', 'user')
+    .order('message_index', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (lastUserMsg) {
+    await supabase.from('saju_cs_escalations').insert({
+      conversation_id: params.conversationId,
+      user_message_id: lastUserMsg.id,
+      slack_channel_id: result.channel,
+      slack_message_ts: result.ts,
+      status: 'pending',
+    });
+  }
+}
+
+// 에스컬레이션 메시지를 "답변 완료"로 업데이트
+export async function updateEscalationMessage(
+  channel: string,
+  ts: string,
+  respondedBy: string,
+  userQuestion: string
+): Promise<void> {
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: 'CS 문의 에스컬레이션', emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*질문:*\n>${userQuestion}`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `:white_check_mark: *답변 완료* by @${respondedBy}`,
+      },
+    },
+  ];
+
+  await slackAPI('chat.update', {
+    channel,
+    ts,
+    text: `CS 답변 완료 by @${respondedBy}`,
+    blocks,
+  });
+}
+
+// 응답 모달 열기
+export async function openResponseModal(
+  triggerId: string,
+  metadata: Record<string, string>
+): Promise<void> {
+  await slackAPI('views.open', {
+    trigger_id: triggerId,
+    view: {
+      type: 'modal',
+      callback_id: 'cs_response_modal',
+      private_metadata: JSON.stringify(metadata),
+      title: { type: 'plain_text', text: '고객 답변' },
+      submit: { type: 'plain_text', text: '전송' },
+      blocks: [
+        {
+          type: 'input',
+          block_id: 'response_block',
+          label: { type: 'plain_text', text: '답변 내용' },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'response_text',
+            multiline: true,
+            placeholder: {
+              type: 'plain_text',
+              text: '고객에게 보낼 답변을 입력하세요...',
+            },
+          },
+        },
+      ],
+    },
+  });
+}
