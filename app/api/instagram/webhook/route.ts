@@ -10,12 +10,19 @@ export async function GET(request: NextRequest) {
   const token = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+  const expectedToken = process.env.WEBHOOK_VERIFY_TOKEN;
+
+  if (mode === 'subscribe' && token === expectedToken) {
     console.log('[Webhook] Verification successful');
     return new NextResponse(challenge, { status: 200 });
   }
 
-  console.warn('[Webhook] Verification failed', { mode, token });
+  console.warn('[Webhook] Verification failed', {
+    mode,
+    receivedToken: token,
+    expectedTokenLength: expectedToken?.length,
+    match: token === expectedToken,
+  });
   return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 }
 
