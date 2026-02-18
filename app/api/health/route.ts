@@ -6,6 +6,7 @@ export async function GET() {
     anthropic: !!process.env.ANTHROPIC_API_KEY,
     instagram: !!process.env.INSTAGRAM_USER_ACCESS_TOKEN,
     slack: !!process.env.SLACK_BOT_TOKEN,
+    webhookToken: !!process.env.WEBHOOK_VERIFY_TOKEN,
   };
 
   const allHealthy = Object.values(checks).every(Boolean);
