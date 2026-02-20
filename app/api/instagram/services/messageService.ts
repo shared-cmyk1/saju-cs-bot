@@ -12,11 +12,8 @@ export const messageService = {
     const messageText = event.message?.text;
     const messageMid = event.message?.mid;
 
-    // 비텍스트 메시지 처리 (이미지, 스티커 등)
+    // 비텍스트 메시지 (이미지, 스티커 등) → 무시
     if (!messageText) {
-      if (event.message?.attachments) {
-        await graphApi.sendMessage(instagramUserId, templates.getNonTextMessage());
-      }
       return;
     }
 
