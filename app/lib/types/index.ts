@@ -14,7 +14,7 @@ export interface Message {
   message_index: number;
   role: 'user' | 'assistant';
   content: string;
-  source: 'ai' | 'human' | 'user';
+  source: 'ai' | 'human' | 'user' | 'system';
   instagram_mid: string | null;
   created_at: string;
 }
@@ -31,6 +31,56 @@ export interface Escalation {
   responded_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// === Learning Types ===
+
+export interface LearningPair {
+  id: string;
+  conversation_id: string;
+  customer_message: string;
+  agent_response: string;
+  category: string | null;
+  categorized_at: string | null;
+  created_at: string;
+}
+
+export interface AutoRule {
+  id: string;
+  category: string;
+  description: string | null;
+  template_response: string;
+  example_questions: string[];
+  pair_count: number;
+  status: 'proposed' | 'approved' | 'rejected';
+  slack_message_ts: string | null;
+  slack_channel_id: string | null;
+  approved_by: string | null;
+  approved_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PendingResponse {
+  id: string;
+  rule_id: string;
+  conversation_id: string;
+  instagram_user_id: string;
+  customer_message: string;
+  proposed_response: string;
+  status: 'pending' | 'sent' | 'rejected';
+  slack_message_ts: string | null;
+  slack_channel_id: string | null;
+  responded_by: string | null;
+  created_at: string;
+}
+
+export interface CategoryAnalysis {
+  category: string;
+  description: string;
+  templateResponse: string;
+  exampleQuestions: string[];
+  pairCount: number;
 }
 
 // === AI Types ===

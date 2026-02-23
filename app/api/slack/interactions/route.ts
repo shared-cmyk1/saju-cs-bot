@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { waitUntil } from '@vercel/functions';
 import { supabase } from '@/app/lib/supabase/client';
-import { openResponseModal, updateEscalationMessage } from '@/app/lib/slack/slackClient';
+import {
+  openResponseModal,
+  updateEscalationMessage,
+  updateAutoRuleMessage,
+  updateResponseProposal,
+} from '@/app/lib/slack/slackClient';
+import { invalidateRuleCache } from '@/app/lib/ai/learningService';
 import * as graphApi from '@/app/api/instagram/services/graphApi';
 import type { SlackInteractionPayload } from '@/app/lib/types';
 
@@ -59,9 +65,35 @@ export async function POST(request: NextRequest) {
 
     if (action.action_id === 'open_response_modal' && payload.trigger_id) {
       const metadata = JSON.parse(action.value);
-
       await openResponseModal(payload.trigger_id, metadata);
+      return new NextResponse('', { status: 200 });
+    }
 
+    // 카테고리 학습 승인
+    if (action.action_id === 'approve_auto_rule') {
+      const category = action.value;
+      waitUntil(handleAutoRuleAction(category, true, payload.user.username, payload));
+      return new NextResponse('', { status: 200 });
+    }
+
+    // 카테고리 학습 거절
+    if (action.action_id === 'reject_auto_rule') {
+      const category = action.value;
+      waitUntil(handleAutoRuleAction(category, false, payload.user.username, payload));
+      return new NextResponse('', { status: 200 });
+    }
+
+    // 건별 응답 승인 (보내기)
+    if (action.action_id === 'send_proposed_response') {
+      const pendingId = action.value;
+      waitUntil(handleProposedResponseAction(pendingId, true, payload.user.username));
+      return new NextResponse('', { status: 200 });
+    }
+
+    // 건별 응답 거절
+    if (action.action_id === 'reject_proposed_response') {
+      const pendingId = action.value;
+      waitUntil(handleProposedResponseAction(pendingId, false, payload.user.username));
       return new NextResponse('', { status: 200 });
     }
   }
@@ -159,5 +191,120 @@ async function handleModalSubmission(
     });
   } catch (error) {
     console.error('[SlackInteraction] Failed to send response:', error);
+  }
+}
+
+// 카테고리 학습 승인/거절 처리
+async function handleAutoRuleAction(
+  category: string,
+  approved: boolean,
+  respondedBy: string,
+  payload: SlackInteractionPayload
+) {
+  try {
+    const newStatus = approved ? 'approved' : 'rejected';
+
+    const { data: rule } = await supabase
+      .from('saju_cs_auto_rules')
+      .select('id, slack_channel_id, slack_message_ts')
+      .eq('category', category)
+      .eq('status', 'proposed')
+      .maybeSingle();
+
+    if (!rule) return;
+
+    await supabase
+      .from('saju_cs_auto_rules')
+      .update({
+        status: newStatus,
+        approved_by: approved ? respondedBy : null,
+        approved_at: approved ? new Date().toISOString() : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', rule.id);
+
+    // 캐시 무효화
+    invalidateRuleCache();
+
+    // Slack 메시지 업데이트
+    if (rule.slack_channel_id && rule.slack_message_ts) {
+      await updateAutoRuleMessage(
+        rule.slack_channel_id,
+        rule.slack_message_ts,
+        category,
+        approved,
+        respondedBy
+      );
+    }
+
+    console.log(`[SlackInteraction] Auto rule ${newStatus}:`, category);
+  } catch (error) {
+    console.error('[SlackInteraction] Auto rule action error:', error);
+  }
+}
+
+// 건별 응답 승인/거절 처리
+async function handleProposedResponseAction(
+  pendingId: string,
+  approved: boolean,
+  respondedBy: string
+) {
+  try {
+    const { data: pending } = await supabase
+      .from('saju_cs_pending_responses')
+      .select('*')
+      .eq('id', pendingId)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (!pending) return;
+
+    if (approved) {
+      // Instagram DM 전송
+      await graphApi.sendMessage(pending.instagram_user_id, pending.proposed_response);
+
+      // 답변 메시지 DB 저장
+      const { data: lastMsg } = await supabase
+        .from('saju_cs_messages')
+        .select('message_index')
+        .eq('conversation_id', pending.conversation_id)
+        .order('message_index', { ascending: false })
+        .limit(1)
+        .single();
+
+      const nextIndex = lastMsg ? lastMsg.message_index + 1 : 0;
+
+      await supabase.from('saju_cs_messages').insert({
+        conversation_id: pending.conversation_id,
+        message_index: nextIndex,
+        role: 'assistant',
+        content: pending.proposed_response,
+        source: 'ai',
+      });
+    }
+
+    // pending response 상태 업데이트
+    await supabase
+      .from('saju_cs_pending_responses')
+      .update({
+        status: approved ? 'sent' : 'rejected',
+        responded_by: respondedBy,
+      })
+      .eq('id', pendingId);
+
+    // Slack 메시지 업데이트
+    if (pending.slack_channel_id && pending.slack_message_ts) {
+      await updateResponseProposal(
+        pending.slack_channel_id,
+        pending.slack_message_ts,
+        approved,
+        respondedBy,
+        pending.customer_message
+      );
+    }
+
+    console.log(`[SlackInteraction] Proposed response ${approved ? 'sent' : 'rejected'}:`, pendingId);
+  } catch (error) {
+    console.error('[SlackInteraction] Proposed response action error:', error);
   }
 }

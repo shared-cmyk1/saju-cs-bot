@@ -2,6 +2,7 @@ import type { InstagramWebhookBody, InstagramMessageEvent } from '@/app/lib/type
 import { messageService } from './messageService';
 import { supabase } from '@/app/lib/supabase/client';
 import { updateEscalationMessage } from '@/app/lib/slack/slackClient';
+import { captureLearningPair } from '@/app/lib/ai/learningService';
 
 export const webhookHandler = {
   async handle(body: InstagramWebhookBody): Promise<void> {
@@ -27,10 +28,11 @@ export const webhookHandler = {
     }
   },
 
-  // 비즈니스 계정이 DM으로 직접 답변 → pending 에스컬레이션 자동 완료
+  // 비즈니스 계정이 DM으로 직접 답변 → 학습 캡처 + pending 에스컬레이션 자동 완료
   async handleBusinessReply(event: InstagramMessageEvent): Promise<void> {
     try {
       const recipientId = event.recipient.id;
+      const agentResponse = event.message?.text || '';
 
       // 해당 고객의 대화 찾기
       const { data: conversation } = await supabase
@@ -40,6 +42,23 @@ export const webhookHandler = {
         .maybeSingle();
 
       if (!conversation) return;
+
+      // 가장 최근 고객 메시지 가져오기 (학습 + 에스컬레이션 양쪽에 사용)
+      const { data: userMsg } = await supabase
+        .from('saju_cs_messages')
+        .select('content')
+        .eq('conversation_id', conversation.id)
+        .eq('role', 'user')
+        .order('message_index', { ascending: false })
+        .limit(1)
+        .single();
+
+      // 학습 캡처 (fire-and-forget)
+      if (userMsg?.content && agentResponse) {
+        captureLearningPair(conversation.id, userMsg.content, agentResponse).catch(
+          (err) => console.error('[WebhookHandler] Learning capture error:', err)
+        );
+      }
 
       // pending 에스컬레이션 찾기
       const { data: escalation } = await supabase
@@ -51,22 +70,12 @@ export const webhookHandler = {
 
       if (!escalation) return;
 
-      // 에스컬레이션에 연결된 원래 질문 가져오기
-      const { data: userMsg } = await supabase
-        .from('saju_cs_messages')
-        .select('content')
-        .eq('conversation_id', conversation.id)
-        .eq('role', 'user')
-        .order('message_index', { ascending: false })
-        .limit(1)
-        .single();
-
       // DB 업데이트: 답변 완료
       await supabase
         .from('saju_cs_escalations')
         .update({
           status: 'answered',
-          team_response: event.message?.text,
+          team_response: agentResponse,
           responded_by: 'instagram_dm',
           responded_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),

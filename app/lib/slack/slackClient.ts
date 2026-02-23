@@ -1,5 +1,5 @@
 import { supabase } from '@/app/lib/supabase/client';
-import type { SlackEscalationParams } from '@/app/lib/types';
+import type { SlackEscalationParams, CategoryAnalysis } from '@/app/lib/types';
 
 function getSlackToken(): string {
   const token = process.env.SLACK_BOT_TOKEN;
@@ -161,6 +161,208 @@ export async function updateEscalationMessage(
     channel,
     ts,
     text: `CS 답변 완료 by @${respondedBy}`,
+    blocks,
+  });
+}
+
+// 카테고리 학습 완료 제안 ("이 카테고리 학습 완료됐어요" + 승인/거절)
+export async function postAutoRuleProposal(
+  analysis: CategoryAnalysis
+): Promise<{ channelId: string; messageTs: string }> {
+  const channelId = getChannelId();
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '자동 응답 학습 완료', emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*카테고리:* ${analysis.category}\n*설명:* ${analysis.description}\n*학습 건수:* ${analysis.pairCount}건`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*템플릿 응답:*\n>${analysis.templateResponse}`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*예시 질문:*\n${analysis.exampleQuestions.map((q) => `• ${q}`).join('\n')}`,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '승인', emoji: true },
+          style: 'primary',
+          action_id: 'approve_auto_rule',
+          value: analysis.category,
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '거절', emoji: true },
+          style: 'danger',
+          action_id: 'reject_auto_rule',
+          value: analysis.category,
+        },
+      ],
+    },
+  ];
+
+  const result = await slackAPI('chat.postMessage', {
+    channel: channelId,
+    text: `자동 응답 학습 완료: ${analysis.category} (${analysis.pairCount}건)`,
+    blocks,
+  });
+
+  return { channelId: result.channel, messageTs: result.ts };
+}
+
+// 건별 응답 제안 ("이 고객에게 이렇게 답변할까요?" + 보내기/거절)
+export async function postResponseProposal(params: {
+  pendingResponseId: string;
+  username: string | null;
+  customerMessage: string;
+  proposedResponse: string;
+  category: string;
+}): Promise<{ channelId: string; messageTs: string }> {
+  const channelId = getChannelId();
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '자동 응답 제안', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        {
+          type: 'mrkdwn',
+          text: `*고객:*\n@${params.username || '알 수 없음'}`,
+        },
+        {
+          type: 'mrkdwn',
+          text: `*매칭 카테고리:*\n${params.category}`,
+        },
+      ],
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*고객 메시지:*\n>${params.customerMessage}`,
+      },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*제안 응답:*\n${params.proposedResponse}`,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '보내기', emoji: true },
+          style: 'primary',
+          action_id: 'send_proposed_response',
+          value: params.pendingResponseId,
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '거절', emoji: true },
+          style: 'danger',
+          action_id: 'reject_proposed_response',
+          value: params.pendingResponseId,
+        },
+      ],
+    },
+  ];
+
+  const result = await slackAPI('chat.postMessage', {
+    channel: channelId,
+    text: `자동 응답 제안 | @${params.username || '알 수 없음'}: "${params.customerMessage}"`,
+    blocks,
+  });
+
+  return { channelId: result.channel, messageTs: result.ts };
+}
+
+// 카테고리 제안 승인/거절 후 메시지 업데이트
+export async function updateAutoRuleMessage(
+  channel: string,
+  ts: string,
+  category: string,
+  approved: boolean,
+  respondedBy: string
+): Promise<void> {
+  const statusText = approved
+    ? `:white_check_mark: *승인됨* by @${respondedBy}`
+    : `:x: *거절됨* by @${respondedBy}`;
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '자동 응답 학습 완료', emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*카테고리:* ${category}\n${statusText}`,
+      },
+    },
+  ];
+
+  await slackAPI('chat.update', {
+    channel,
+    ts,
+    text: `자동 응답 ${approved ? '승인' : '거절'}: ${category} by @${respondedBy}`,
+    blocks,
+  });
+}
+
+// 건별 제안 승인/거절 후 메시지 업데이트
+export async function updateResponseProposal(
+  channel: string,
+  ts: string,
+  approved: boolean,
+  respondedBy: string,
+  customerMessage: string
+): Promise<void> {
+  const statusText = approved
+    ? `:white_check_mark: *전송 완료* by @${respondedBy}`
+    : `:x: *거절됨* by @${respondedBy}`;
+
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '자동 응답 제안', emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*고객 메시지:*\n>${customerMessage}\n\n${statusText}`,
+      },
+    },
+  ];
+
+  await slackAPI('chat.update', {
+    channel,
+    ts,
+    text: `자동 응답 ${approved ? '전송' : '거절'} by @${respondedBy}`,
     blocks,
   });
 }
