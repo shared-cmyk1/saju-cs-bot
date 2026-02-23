@@ -77,8 +77,19 @@ export const messageService = {
       }
       // 4. 업무시간 + 매칭 없음 → return (담당자가 처리)
     } else {
-      // 5. 업무 외 + 첫 DM → 안내 메시지
-      if (isFirstMessage) {
+      // 5. 업무 외 → 마지막 응답이 이미 안내 메시지가 아닐 때만 전송
+      const { data: lastAssistantMsg } = await supabase
+        .from('saju_cs_messages')
+        .select('source')
+        .eq('conversation_id', conversation.id)
+        .eq('role', 'assistant')
+        .order('message_index', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const alreadyNotified = lastAssistantMsg?.source === 'system';
+
+      if (!alreadyNotified) {
         const offHoursMsg = templates.getOffHoursMessage();
         await graphApi.sendMessage(instagramUserId, offHoursMsg);
         await supabase.from('saju_cs_messages').insert({
@@ -89,7 +100,6 @@ export const messageService = {
           source: 'system',
         });
       }
-      // 6. 업무 외 + 이후 → 저장만
     }
 
     await supabase
