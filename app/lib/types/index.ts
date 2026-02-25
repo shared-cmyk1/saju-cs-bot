@@ -125,12 +125,10 @@ export interface InstagramWebhookBody {
 // === Slack Types ===
 
 export interface SlackEscalationParams {
-  escalationId: string;
   conversationId: string;
   instagramUserId: string;
   username: string | null;
   userQuestion: string;
-  aiSuggestedAnswer?: string;
 }
 
 export interface SlackInteractionPayload {

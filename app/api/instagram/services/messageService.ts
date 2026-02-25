@@ -2,7 +2,11 @@ import { supabase } from '@/app/lib/supabase/client';
 import * as graphApi from './graphApi';
 import * as templates from './messageTemplates';
 import { matchRule, generateAutoResponse } from '@/app/lib/ai/learningService';
-import { postResponseProposal } from '@/app/lib/slack/slackClient';
+import {
+  postEscalation,
+  postFollowUpMessage,
+  postResponseProposal,
+} from '@/app/lib/slack/slackClient';
 import type { InstagramMessageEvent, Conversation } from '@/app/lib/types';
 
 function isBusinessHours(): boolean {
@@ -17,14 +21,28 @@ export const messageService = {
   async handleMessage(event: InstagramMessageEvent): Promise<void> {
     const instagramUserId = event.sender.id;
     const messageText = event.message?.text;
+    const messageMid = event.message?.mid;
 
     // 1. 비텍스트 메시지 → 무시
     if (!messageText) return;
 
-    // 2. 대화 생성/조회 + 메시지 저장
+    // 2. 중복 메시지 체크 (Instagram 웹훅 재전송 방지)
+    if (messageMid) {
+      const { data: existing } = await supabase
+        .from('saju_cs_messages')
+        .select('id')
+        .eq('instagram_mid', messageMid)
+        .maybeSingle();
+
+      if (existing) {
+        console.log('[MessageService] Duplicate message, skipping:', messageMid);
+        return;
+      }
+    }
+
+    // 3. 대화 생성/조회 + 메시지 저장
     const conversation = await this.getOrCreateConversation(instagramUserId);
     const nextIndex = await this.getNextMessageIndex(conversation.id);
-    const isFirstMessage = nextIndex === 0;
 
     await supabase.from('saju_cs_messages').insert({
       conversation_id: conversation.id,
@@ -32,16 +50,30 @@ export const messageService = {
       role: 'user',
       content: messageText,
       source: 'user',
-      instagram_mid: event.message?.mid,
+      instagram_mid: messageMid,
     });
 
-    if (isBusinessHours()) {
-      // 3. 업무시간 + 승인된 규칙 매칭 → Slack에 응답 초안 제안
+    // 4. 이미 에스컬레이션 대기 중이면 Slack에 추가 메시지만 전달
+    const { data: pendingEscalation } = await supabase
+      .from('saju_cs_escalations')
+      .select('id')
+      .eq('conversation_id', conversation.id)
+      .eq('status', 'pending')
+      .maybeSingle();
+
+    if (pendingEscalation) {
+      await postFollowUpMessage({
+        username: conversation.instagram_username,
+        userQuestion: messageText,
+      });
+    } else {
+      // 5. 승인된 자동 규칙 매칭 시도
       const match = await matchRule(messageText);
+
       if (match) {
+        // 규칙 매칭 → Slack에 자동 응답 제안 (보내기/거절 버튼)
         const proposedResponse = await generateAutoResponse(match.rule, messageText);
 
-        // DB에 pending response 생성
         const { data: pending, error } = await supabase
           .from('saju_cs_pending_responses')
           .insert({
@@ -56,7 +88,6 @@ export const messageService = {
           .single();
 
         if (!error && pending) {
-          // Slack에 건별 응답 제안
           const { channelId, messageTs } = await postResponseProposal({
             pendingResponseId: pending.id,
             username: conversation.instagram_username,
@@ -65,7 +96,6 @@ export const messageService = {
             category: match.rule.category,
           });
 
-          // Slack 메시지 정보 저장
           await supabase
             .from('saju_cs_pending_responses')
             .update({
@@ -74,10 +104,19 @@ export const messageService = {
             })
             .eq('id', pending.id);
         }
+      } else {
+        // 6. 매칭 없음 → Slack에 에스컬레이션
+        await postEscalation({
+          conversationId: conversation.id,
+          instagramUserId,
+          username: conversation.instagram_username,
+          userQuestion: messageText,
+        });
       }
-      // 4. 업무시간 + 매칭 없음 → return (담당자가 처리)
-    } else {
-      // 5. 업무 외 → 마지막 응답이 이미 안내 메시지가 아닐 때만 전송
+    }
+
+    // 7. 업무 외 시간 → 안내 메시지 전송 (중복 방지)
+    if (!isBusinessHours()) {
       const { data: lastAssistantMsg } = await supabase
         .from('saju_cs_messages')
         .select('source')

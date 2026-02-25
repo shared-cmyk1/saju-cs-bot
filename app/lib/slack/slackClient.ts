@@ -61,17 +61,6 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
         text: `*질문:*\n>${params.userQuestion}`,
       },
     },
-    ...(params.aiSuggestedAnswer
-      ? [
-          {
-            type: 'section',
-            text: {
-              type: 'mrkdwn',
-              text: `*AI 추천 답변 (참고):*\n${params.aiSuggestedAnswer}`,
-            },
-          },
-        ]
-      : []),
     {
       type: 'actions',
       elements: [
