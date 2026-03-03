@@ -115,20 +115,23 @@ export const messageService = {
       }
     }
 
-    // 7. 업무 외 시간 → 안내 메시지 전송 (중복 방지)
+    // 7. 업무 외 시간 → 안내 메시지 전송 (하루 1회)
     if (!isBusinessHours()) {
-      const { data: lastAssistantMsg } = await supabase
+      const now = new Date();
+      const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+      const todayKST = kst.toISOString().slice(0, 10); // YYYY-MM-DD in KST
+      const todayStartUTC = new Date(`${todayKST}T00:00:00+09:00`).toISOString();
+
+      const { count } = await supabase
         .from('saju_cs_messages')
-        .select('source')
+        .select('id', { count: 'exact', head: true })
         .eq('conversation_id', conversation.id)
-        .eq('role', 'assistant')
-        .order('message_index', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .eq('source', 'system')
+        .gte('created_at', todayStartUTC);
 
-      const alreadyNotified = lastAssistantMsg?.source === 'system';
+      const alreadyNotifiedToday = (count ?? 0) > 0;
 
-      if (!alreadyNotified) {
+      if (!alreadyNotifiedToday) {
         const offHoursMsg = templates.getOffHoursMessage();
         await graphApi.sendMessage(instagramUserId, offHoursMsg);
         await supabase.from('saju_cs_messages').insert({
