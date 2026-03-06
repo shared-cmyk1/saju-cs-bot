@@ -28,10 +28,8 @@ const MESSAGES = {
     '본인의 이름, 성별, 생년월일, 태어난 시간을 알려주세요.\n\n예) 김철수 남자 95년 3월 2일 오후 2시\n\n* 태어난 시간을 모르시면 "모름"이라고 적어주세요.',
   askPartnerInfo:
     '상대방의 이름, 성별, 생년월일, 태어난 시간도 알려주세요.\n\n예) 이영희 여자 97년 5월 15일 오전 8시',
-  generating:
-    '리포트 생성을 시작했어요! 약 2~5분 정도 소요됩니다.\n완료되면 바로 알려드릴게요 😊',
-  completed: (url: string) =>
-    `리포트가 완료되었습니다!\n\n아래 링크에서 확인해주세요:\n${url}`,
+  generating: (url: string) =>
+    `리포트 생성을 시작했어요!\n약 2~5분 후 아래 링크에서 확인해주세요 😊\n\n${url}`,
   failed:
     '죄송합니다. 리포트 생성 중 문제가 발생했어요.\n담당자가 확인 후 빠르게 처리해드릴게요 🙏',
   expired:
@@ -370,81 +368,19 @@ async function submitReport(session: ReportSession): Promise<void> {
     const result = await createReport(params);
 
     await updateSession(session.id, {
-      step: 'generating',
+      step: 'completed',
       shop_order_no: result.shopOrderNo,
+      report_url: result.reportUrl,
     });
 
-    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.generating);
+    await graphApi.sendMessage(
+      session.instagram_user_id,
+      MESSAGES.generating(result.reportUrl)
+    );
   } catch (error) {
     console.error('[ReportService] submitReport error:', error);
     await updateSession(session.id, { step: 'failed' });
     await graphApi.sendMessage(session.instagram_user_id, MESSAGES.failed);
-  }
-}
-
-// === 크론잡에서 사용하는 함수들 ===
-
-export async function getGeneratingSessions(): Promise<ReportSession[]> {
-  const { data } = await supabase
-    .from('saju_cs_report_sessions')
-    .select('*')
-    .eq('step', 'generating')
-    .not('shop_order_no', 'is', null);
-
-  return (data as ReportSession[]) || [];
-}
-
-export async function markSessionCompleted(
-  sessionId: string,
-  reportUrl: string
-): Promise<void> {
-  await updateSession(sessionId, {
-    step: 'completed',
-    report_url: reportUrl,
-  });
-}
-
-export async function markSessionFailed(sessionId: string): Promise<void> {
-  await updateSession(sessionId, { step: 'failed' });
-}
-
-export async function incrementPollCount(sessionId: string): Promise<void> {
-  // RPC를 안 쓰고 수동으로 처리
-  const { data } = await supabase
-    .from('saju_cs_report_sessions')
-    .select('poll_count')
-    .eq('id', sessionId)
-    .single();
-
-  await supabase
-    .from('saju_cs_report_sessions')
-    .update({
-      poll_count: (data?.poll_count || 0) + 1,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', sessionId);
-}
-
-export async function expireOldSessions(): Promise<void> {
-  const { data } = await supabase
-    .from('saju_cs_report_sessions')
-    .select('id, instagram_user_id')
-    .in('step', ['awaiting_service', 'awaiting_info', 'awaiting_partner_info', 'confirming'])
-    .lt('expires_at', new Date().toISOString());
-
-  if (!data || data.length === 0) return;
-
-  for (const session of data) {
-    await supabase
-      .from('saju_cs_report_sessions')
-      .update({ step: 'expired', updated_at: new Date().toISOString() })
-      .eq('id', session.id);
-
-    try {
-      await graphApi.sendMessage(session.instagram_user_id, MESSAGES.expired);
-    } catch {
-      // DM 전송 실패해도 세션은 만료 처리
-    }
   }
 }
 
