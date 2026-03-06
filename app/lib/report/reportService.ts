@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '@/app/lib/supabase/client';
 import * as graphApi from '@/app/api/instagram/services/graphApi';
-import { createReport } from './reportApiClient';
+import { createReport, type CreateReunionReportParams } from './reportApiClient';
 import type { ReportSession, GoodsType, PersonInfo } from '@/app/lib/types';
 
 const anthropic = new Anthropic();
@@ -346,21 +346,28 @@ async function submitReport(session: ReportSession): Promise<void> {
   try {
     const myInfo = session.my_info;
 
-    const result = await createReport({
-      goodsType: session.goods_type!,
-      name: myInfo.name!,
-      gender: myInfo.gender!,
-      birthdate: myInfo.birthdate!,
-      birthTime: myInfo.birthTime || '모름',
-      ...(session.goods_type === 'REUNION' && session.partner_info?.name
-        ? {
-            partnerName: session.partner_info.name,
-            partnerGender: session.partner_info.gender,
-            partnerBirthdate: session.partner_info.birthdate,
-            partnerBirthTime: session.partner_info.birthTime || '모름',
-          }
-        : {}),
-    });
+    const params =
+      session.goods_type === 'REUNION'
+        ? ({
+            goodsType: 'REUNION',
+            myName: myInfo.name!,
+            myGender: myInfo.gender!,
+            myBirthdate: myInfo.birthdate!,
+            myBirthTime: myInfo.birthTime || 'unknown',
+            partnerName: session.partner_info?.name || '상대방',
+            partnerGender: session.partner_info?.gender || '여',
+            partnerBirthdate: session.partner_info?.birthdate || '',
+            partnerBirthTime: session.partner_info?.birthTime || 'unknown',
+          } satisfies CreateReunionReportParams)
+        : {
+            goodsType: session.goods_type!,
+            name: myInfo.name!,
+            gender: myInfo.gender!,
+            birthdate: myInfo.birthdate!,
+            birthTime: myInfo.birthTime || 'unknown',
+          };
+
+    const result = await createReport(params);
 
     await updateSession(session.id, {
       step: 'generating',

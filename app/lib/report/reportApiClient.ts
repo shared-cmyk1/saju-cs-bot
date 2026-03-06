@@ -10,36 +10,51 @@ function getApiKey(): string {
   return key;
 }
 
+// 일반 사주 요청
 export interface CreateReportParams {
   goodsType: string;
   name: string;
   gender: string;
   birthdate: string;
   birthTime: string;
-  partnerName?: string;
-  partnerGender?: string;
-  partnerBirthdate?: string;
-  partnerBirthTime?: string;
+}
+
+// REUNION 요청
+export interface CreateReunionReportParams {
+  goodsType: 'REUNION';
+  myName: string;
+  myGender: string;
+  myBirthdate: string;
+  myBirthTime: string;
+  partnerName: string;
+  partnerGender: string;
+  partnerBirthdate: string;
+  partnerBirthTime: string;
 }
 
 export interface CreateReportResponse {
+  success: boolean;
   shopOrderNo: string;
+  reportUrl: string;
+  status: string;
+  estimatedSeconds: number;
 }
 
 export interface ReportStatusResponse {
-  status: 'PENDING' | 'PROCESSING' | 'DONE' | 'ERROR';
+  status: 'GENERATING' | 'DONE' | 'ERROR';
   reportUrl?: string;
-  errorMessage?: string;
+  elapsedSeconds?: number;
+  error?: string;
 }
 
 export async function createReport(
-  params: CreateReportParams
+  params: CreateReportParams | CreateReunionReportParams
 ): Promise<CreateReportResponse> {
   const response = await fetch(`${getApiUrl()}/api/external/report`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-API-Key': getApiKey(),
+      'x-api-key': getApiKey(),
     },
     body: JSON.stringify(params),
   });
@@ -60,7 +75,7 @@ export async function checkReportStatus(
     `${getApiUrl()}/api/external/report/status?shopOrderNo=${encodeURIComponent(shopOrderNo)}`,
     {
       headers: {
-        'X-API-Key': getApiKey(),
+        'x-api-key': getApiKey(),
       },
     }
   );
