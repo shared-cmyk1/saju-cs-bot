@@ -9,6 +9,10 @@ import {
   updateResponseProposal,
 } from '@/app/lib/slack/slackClient';
 import { invalidateRuleCache } from '@/app/lib/ai/learningService';
+import {
+  createSession,
+  MESSAGES,
+} from '@/app/lib/report/reportService';
 import * as graphApi from '@/app/api/instagram/services/graphApi';
 import type { SlackInteractionPayload } from '@/app/lib/types';
 
@@ -94,6 +98,19 @@ export async function POST(request: NextRequest) {
     if (action.action_id === 'reject_proposed_response') {
       const pendingId = action.value;
       waitUntil(handleProposedResponseAction(pendingId, false, payload.user.username));
+      return new NextResponse('', { status: 200 });
+    }
+
+    // 리포트 재발급 시작
+    if (action.action_id === 'start_report_reissue') {
+      const metadata = JSON.parse(action.value);
+      waitUntil(
+        handleStartReportReissue(
+          metadata.conversation_id,
+          metadata.instagram_user_id,
+          payload.user.username
+        )
+      );
       return new NextResponse('', { status: 200 });
     }
   }
@@ -306,5 +323,29 @@ async function handleProposedResponseAction(
     console.log(`[SlackInteraction] Proposed response ${approved ? 'sent' : 'rejected'}:`, pendingId);
   } catch (error) {
     console.error('[SlackInteraction] Proposed response action error:', error);
+  }
+}
+
+// 리포트 재발급 시작
+async function handleStartReportReissue(
+  conversationId: string,
+  instagramUserId: string,
+  initiatedBy: string
+) {
+  try {
+    await createSession({
+      conversationId,
+      instagramUserId,
+      initiatedBy,
+    });
+
+    await graphApi.sendMessage(instagramUserId, MESSAGES.askService);
+
+    console.log('[SlackInteraction] Report reissue started:', {
+      conversationId,
+      initiatedBy,
+    });
+  } catch (error) {
+    console.error('[SlackInteraction] Report reissue error:', error);
   }
 }

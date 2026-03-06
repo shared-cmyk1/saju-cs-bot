@@ -122,6 +122,44 @@ export interface InstagramWebhookBody {
   }>;
 }
 
+// === Report Session Types ===
+
+export type GoodsType = 'CLASSIC' | 'ROMANTIC' | 'SPICYSAJU' | 'REUNION';
+
+export type ReportSessionStep =
+  | 'awaiting_service'
+  | 'awaiting_info'
+  | 'awaiting_partner_info'
+  | 'confirming'
+  | 'generating'
+  | 'completed'
+  | 'failed'
+  | 'expired';
+
+export interface PersonInfo {
+  name?: string;
+  gender?: string;
+  birthdate?: string; // YYYYMMDD
+  birthTime?: string; // HH:mm
+}
+
+export interface ReportSession {
+  id: string;
+  conversation_id: string;
+  instagram_user_id: string;
+  goods_type: GoodsType | null;
+  step: ReportSessionStep;
+  my_info: PersonInfo;
+  partner_info: PersonInfo;
+  shop_order_no: string | null;
+  report_url: string | null;
+  poll_count: number;
+  initiated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+}
+
 // === Slack Types ===
 
 export interface SlackEscalationParams {

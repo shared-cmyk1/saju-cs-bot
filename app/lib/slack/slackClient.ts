@@ -223,8 +223,44 @@ export async function postResponseProposal(params: {
   customerMessage: string;
   proposedResponse: string;
   category: string;
+  conversationId?: string;
+  instagramUserId?: string;
 }): Promise<{ channelId: string; messageTs: string }> {
   const channelId = getChannelId();
+
+  const actionButtons: Record<string, unknown>[] = [
+    {
+      type: 'button',
+      text: { type: 'plain_text', text: '보내기', emoji: true },
+      style: 'primary',
+      action_id: 'send_proposed_response',
+      value: params.pendingResponseId,
+    },
+    {
+      type: 'button',
+      text: { type: 'plain_text', text: '거절', emoji: true },
+      style: 'danger',
+      action_id: 'reject_proposed_response',
+      value: params.pendingResponseId,
+    },
+  ];
+
+  // 결제오류_결과미수신 카테고리 → 리포트 재발급 버튼 추가
+  if (
+    params.category === '결제오류_결과미수신' &&
+    params.conversationId &&
+    params.instagramUserId
+  ) {
+    actionButtons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+      action_id: 'start_report_reissue',
+      value: JSON.stringify({
+        conversation_id: params.conversationId,
+        instagram_user_id: params.instagramUserId,
+      }),
+    });
+  }
 
   const blocks = [
     {
@@ -260,22 +296,7 @@ export async function postResponseProposal(params: {
     },
     {
       type: 'actions',
-      elements: [
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: '보내기', emoji: true },
-          style: 'primary',
-          action_id: 'send_proposed_response',
-          value: params.pendingResponseId,
-        },
-        {
-          type: 'button',
-          text: { type: 'plain_text', text: '거절', emoji: true },
-          style: 'danger',
-          action_id: 'reject_proposed_response',
-          value: params.pendingResponseId,
-        },
-      ],
+      elements: actionButtons,
     },
   ];
 

@@ -7,6 +7,10 @@ import {
   postFollowUpMessage,
   postResponseProposal,
 } from '@/app/lib/slack/slackClient';
+import {
+  getActiveSession,
+  handleSessionMessage,
+} from '@/app/lib/report/reportService';
 import type { InstagramMessageEvent, Conversation } from '@/app/lib/types';
 
 function isBusinessHours(): boolean {
@@ -53,7 +57,18 @@ export const messageService = {
       instagram_mid: messageMid,
     });
 
-    // 4. 이미 에스컬레이션 대기 중이면 Slack에 추가 메시지만 전달
+    // 4. 활성 리포트 세션 체크 → 세션이 있으면 세션 핸들러로 처리
+    const activeSession = await getActiveSession(conversation.id);
+    if (activeSession) {
+      await handleSessionMessage(activeSession, messageText);
+      await supabase
+        .from('saju_cs_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', conversation.id);
+      return;
+    }
+
+    // 5. 이미 에스컬레이션 대기 중이면 Slack에 추가 메시지만 전달
     const { data: pendingEscalation } = await supabase
       .from('saju_cs_escalations')
       .select('id')
@@ -94,6 +109,8 @@ export const messageService = {
             customerMessage: messageText,
             proposedResponse,
             category: match.rule.category,
+            conversationId: conversation.id,
+            instagramUserId: instagramUserId,
           });
 
           await supabase
