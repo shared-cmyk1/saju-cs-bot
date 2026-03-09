@@ -1,3 +1,51 @@
+// === 미리보기 API ===
+
+export interface CreatePreviewParams {
+  name?: string;
+  gender?: string;
+  birthdate: string;
+  birthTime?: string;
+  goodsTypes?: string[];
+}
+
+export interface PreviewItem {
+  goodsType: string;
+  title: string;
+  platform: string;
+  previewUrl: string;
+}
+
+export interface CreatePreviewResponse {
+  success: boolean;
+  visitGroupId: string;
+  previews: PreviewItem[];
+}
+
+export async function createPreview(
+  params: CreatePreviewParams,
+  apiUrl: string,
+  apiKey: string
+): Promise<CreatePreviewResponse> {
+  const response = await fetch(`${apiUrl}/api/external/preview`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[ReportAPI] createPreview failed:', errorText);
+    throw new Error(`Preview API error: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+// === 리포트 API ===
+
 // 일반 사주 요청
 export interface CreateReportParams {
   goodsType: string;

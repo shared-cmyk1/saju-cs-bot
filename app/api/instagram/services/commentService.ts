@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '@/app/lib/supabase/client';
 import * as graphApi from './graphApi';
+import { createPreview } from '@/app/lib/report/reportApiClient';
 import type { InstagramCommentEvent, AccountConfig } from '@/app/lib/types';
 
 const anthropic = new Anthropic();
@@ -10,7 +11,6 @@ interface BirthdateExtraction {
   birthdate?: string; // YYYYMMDD
   birthTime?: string; // HH:mm or '모름'
   gender?: string;    // 남 or 여
-  name?: string;
 }
 
 // 댓글에서 생년월일 추출
@@ -35,8 +35,7 @@ async function extractBirthdateFromComment(
   "hasBirthdate": true 또는 false,
   "birthdate": "YYYYMMDD 형식 (없으면 null)",
   "birthTime": "HH:mm 형식 (없으면 null, 모르면 null)",
-  "gender": "남" 또는 "여" (없으면 null),
-  "name": "이름 (없으면 null)"
+  "gender": "남" 또는 "여" (없으면 null)
 }
 
 생년월일이 없는 일반 댓글이면 hasBirthdate: false로 응답하세요.
@@ -54,55 +53,6 @@ JSON만 출력하세요.`,
   }
 }
 
-// 사주 미리보기 생성 (Claude로 간단한 운세 티저)
-async function generatePreview(
-  birthdate: string,
-  birthTime?: string,
-  gender?: string
-): Promise<string> {
-  const birthTimeStr = birthTime && birthTime !== '모름' ? birthTime : null;
-  const genderStr = gender === '남' ? '남성' : gender === '여' ? '여성' : null;
-
-  const userInfo = [
-    `생년월일: ${birthdate.slice(0, 4)}년 ${parseInt(birthdate.slice(4, 6))}월 ${parseInt(birthdate.slice(6, 8))}일`,
-    birthTimeStr ? `태어난 시간: ${birthTimeStr}` : null,
-    genderStr ? `성별: ${genderStr}` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
-
-  try {
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 500,
-      temperature: 0.7,
-      system: `당신은 사주로그의 사주 미리보기 생성 봇입니다.
-사주명리학 기초를 바탕으로 생년월일에 맞는 간단한 운세 미리보기를 작성하세요.
-
-## 규칙
-- 3~4줄 정도의 짧은 미리보기 (Instagram DM에 적합하게)
-- 사주팔자의 일간(日干), 월지(月支)를 기반으로 가벼운 성격/운세 힌트
-- 긍정적이고 흥미를 유발하는 톤
-- 마크다운 사용하지 않기
-- "더 자세한 내용이 궁금하시면 사주로그에서 확인해보세요!" 같은 CTA는 포함하지 마세요 (별도로 붙입니다)
-- 순수 텍스트만 출력하세요`,
-      messages: [
-        {
-          role: 'user',
-          content: `아래 정보로 사주 미리보기를 작성해주세요:\n${userInfo}`,
-        },
-      ],
-    });
-
-    const text =
-      response.content[0].type === 'text' ? response.content[0].text.trim() : '';
-    return text;
-  } catch (error) {
-    console.error('[CommentService] generatePreview error:', error);
-    return '';
-  }
-}
-
 // 댓글 처리 메인 로직
 export async function handleComment(
   comment: InstagramCommentEvent['value'],
@@ -112,6 +62,11 @@ export async function handleComment(
   const userId = comment.from.id;
   const username = comment.from.username;
   const commentText = comment.text;
+
+  // 미리보기 API 설정 없는 계정은 스킵
+  if (!account.report_api_url || !account.report_api_key) {
+    return;
+  }
 
   // 대댓글은 무시 (parent_id가 있으면 대댓글)
   if (comment.parent_id) return;
@@ -146,38 +101,48 @@ export async function handleComment(
     return;
   }
 
-  // 미리보기 생성
-  const preview = await generatePreview(
-    extraction.birthdate,
-    extraction.birthTime || undefined,
-    extraction.gender || undefined
-  );
-
-  if (!preview) {
-    await supabase.from('saju_cs_comment_reports').insert({
-      account_id: account.id,
-      comment_id: commentId,
-      media_id: comment.media.id,
-      instagram_user_id: userId,
-      instagram_username: username || null,
-      comment_text: commentText,
-      birthdate: extraction.birthdate,
-      birth_time: extraction.birthTime || null,
-      preview_sent: false,
-      error: 'Preview generation failed',
-    });
-    return;
-  }
-
-  // DM 메시지 구성
-  const dmMessage = `안녕하세요${username ? ` @${username}` : ''}님! 😊
-댓글에 남겨주신 생년월일로 간단한 사주 미리보기를 준비했어요 ✨
-
-${preview}
-
-더 자세하고 깊이 있는 분석이 궁금하시다면, 프로필 링크에서 확인해보세요! 🔮`;
-
+  // 미리보기 API 호출 (이름은 인스타 닉네임, REUNION 제외)
   try {
+    const previewResult = await createPreview(
+      {
+        name: username || '고객',
+        gender: extraction.gender || undefined,
+        birthdate: extraction.birthdate,
+        birthTime: extraction.birthTime || undefined,
+        goodsTypes: ['CLASSIC', 'ROMANTIC', 'SPICYSAJU'],
+      },
+      account.report_api_url,
+      account.report_api_key
+    );
+
+    if (!previewResult.success || previewResult.previews.length === 0) {
+      await supabase.from('saju_cs_comment_reports').insert({
+        account_id: account.id,
+        comment_id: commentId,
+        media_id: comment.media.id,
+        instagram_user_id: userId,
+        instagram_username: username || null,
+        comment_text: commentText,
+        birthdate: extraction.birthdate,
+        birth_time: extraction.birthTime || null,
+        preview_sent: false,
+        error: 'Preview API returned no results',
+      });
+      return;
+    }
+
+    // DM 메시지 구성
+    const previewLinks = previewResult.previews
+      .map((p) => `${p.title}: ${p.previewUrl}`)
+      .join('\n');
+
+    const dmMessage = `안녕하세요${username ? ` @${username}` : ''}님! 😊
+댓글에 남겨주신 생년월일로 사주 미리보기를 준비했어요 ✨
+
+${previewLinks}
+
+링크를 눌러 나만의 사주 결과를 확인해보세요! 🔮`;
+
     // DM 발송
     await graphApi.sendMessage(userId, dmMessage, account.instagram_access_token);
 
@@ -199,9 +164,10 @@ ${preview}
       commentId,
       userId,
       birthdate: extraction.birthdate,
+      previewCount: previewResult.previews.length,
     });
   } catch (error) {
-    console.error('[CommentService] DM send failed:', error);
+    console.error('[CommentService] Preview/DM failed:', error);
 
     await supabase.from('saju_cs_comment_reports').insert({
       account_id: account.id,
@@ -213,7 +179,7 @@ ${preview}
       birthdate: extraction.birthdate,
       birth_time: extraction.birthTime || null,
       preview_sent: false,
-      error: error instanceof Error ? error.message : 'DM send failed',
+      error: error instanceof Error ? error.message : 'Preview/DM failed',
     });
   }
 }
