@@ -1,7 +1,30 @@
+// === Account Config ===
+
+export interface AccountConfig {
+  id: string;
+  slug: string;
+  display_name: string;
+  instagram_business_account_id: string;
+  instagram_access_token: string;
+  instagram_username: string | null;
+  slack_channel_id: string;
+  faq_content: string | null;
+  business_hours_timezone: string;
+  business_hours_start: number;
+  business_hours_end: number;
+  business_days: number[];
+  off_hours_message: string | null;
+  report_api_url: string | null;
+  report_api_key: string | null;
+  service_map: Record<string, string> | null;
+  is_active: boolean;
+}
+
 // === Database Types ===
 
 export interface Conversation {
   id: string;
+  account_id: string;
   instagram_user_id: string;
   instagram_username: string | null;
   created_at: string;
@@ -21,6 +44,7 @@ export interface Message {
 
 export interface Escalation {
   id: string;
+  account_id: string;
   conversation_id: string;
   user_message_id: string;
   slack_channel_id: string;
@@ -37,6 +61,7 @@ export interface Escalation {
 
 export interface LearningPair {
   id: string;
+  account_id: string;
   conversation_id: string;
   customer_message: string;
   agent_response: string;
@@ -47,6 +72,7 @@ export interface LearningPair {
 
 export interface AutoRule {
   id: string;
+  account_id: string;
   category: string;
   description: string | null;
   template_response: string;
@@ -63,6 +89,7 @@ export interface AutoRule {
 
 export interface PendingResponse {
   id: string;
+  account_id: string;
   rule_id: string;
   conversation_id: string;
   instagram_user_id: string;
@@ -145,6 +172,7 @@ export interface PersonInfo {
 
 export interface ReportSession {
   id: string;
+  account_id: string;
   conversation_id: string;
   instagram_user_id: string;
   goods_type: GoodsType | null;
@@ -163,6 +191,8 @@ export interface ReportSession {
 // === Slack Types ===
 
 export interface SlackEscalationParams {
+  accountId: string;
+  channelId: string;
   conversationId: string;
   instagramUserId: string;
   username: string | null;

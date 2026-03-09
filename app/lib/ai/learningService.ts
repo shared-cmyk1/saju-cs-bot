@@ -9,12 +9,13 @@ const CATEGORY_THRESHOLD = 5;
 const MATCH_CONFIDENCE_THRESHOLD = 0.85;
 const RULE_CACHE_TTL_MS = 2 * 60 * 1000; // 2분
 
-// 승인된 규칙 캐시
-let cachedRules: AutoRule[] | null = null;
-let cacheTimestamp = 0;
+// 계정별 승인된 규칙 캐시
+const ruleCache = new Map<string, { rules: AutoRule[]; timestamp: number }>();
 
 // Q&A 쌍 저장 → 카테고리 분류 → 임계값 확인 → 제안 트리거
 export async function captureLearningPair(
+  accountId: string,
+  channelId: string,
   conversationId: string,
   customerMessage: string,
   agentResponse: string
@@ -25,6 +26,7 @@ export async function captureLearningPair(
 
     // Q&A 쌍 저장
     await supabase.from('saju_cs_learning_pairs').insert({
+      account_id: accountId,
       conversation_id: conversationId,
       customer_message: customerMessage,
       agent_response: agentResponse,
@@ -38,6 +40,7 @@ export async function captureLearningPair(
     const { data: existingRule } = await supabase
       .from('saju_cs_auto_rules')
       .select('id, status')
+      .eq('account_id', accountId)
       .eq('category', category)
       .maybeSingle();
 
@@ -47,12 +50,13 @@ export async function captureLearningPair(
     const { count } = await supabase
       .from('saju_cs_learning_pairs')
       .select('id', { count: 'exact', head: true })
+      .eq('account_id', accountId)
       .eq('category', category);
 
     if (!count || count < CATEGORY_THRESHOLD) return;
 
     // 임계값 도달 → 카테고리 분석 및 Slack 제안
-    await analyzeCategory(category);
+    await analyzeCategory(accountId, channelId, category);
   } catch (error) {
     console.error('[LearningService] captureLearningPair error:', error);
   }
@@ -89,11 +93,16 @@ async function categorizePair(
 }
 
 // 카테고리 분석: AI가 템플릿 생성 + Slack 제안
-async function analyzeCategory(category: string): Promise<void> {
+async function analyzeCategory(
+  accountId: string,
+  channelId: string,
+  category: string
+): Promise<void> {
   // 해당 카테고리의 Q&A 쌍 조회
   const { data: pairs } = await supabase
     .from('saju_cs_learning_pairs')
     .select('customer_message, agent_response')
+    .eq('account_id', accountId)
     .eq('category', category)
     .order('created_at', { ascending: false })
     .limit(10);
@@ -105,9 +114,14 @@ async function analyzeCategory(category: string): Promise<void> {
   if (!analysis) return;
 
   // Slack에 카테고리 제안 → ts 받아서 DB에 저장
-  const { channelId, messageTs } = await postAutoRuleProposal(analysis);
+  const { channelId: resultChannelId, messageTs } = await postAutoRuleProposal(
+    analysis,
+    channelId,
+    accountId
+  );
 
   await supabase.from('saju_cs_auto_rules').insert({
+    account_id: accountId,
     category: analysis.category,
     description: analysis.description,
     template_response: analysis.templateResponse,
@@ -115,7 +129,7 @@ async function analyzeCategory(category: string): Promise<void> {
     pair_count: analysis.pairCount,
     status: 'proposed',
     slack_message_ts: messageTs,
-    slack_channel_id: channelId,
+    slack_channel_id: resultChannelId,
   });
 
   console.log('[LearningService] Category proposal sent:', category);
@@ -170,9 +184,10 @@ async function generateCategoryTemplate(
 
 // 승인된 규칙 매칭 (confidence >= 0.85)
 export async function matchRule(
+  accountId: string,
   customerMessage: string
 ): Promise<{ rule: AutoRule; confidence: number } | null> {
-  const rules = await getApprovedRules();
+  const rules = await getApprovedRules(accountId);
   if (rules.length === 0) return null;
 
   try {
@@ -249,25 +264,30 @@ export async function generateAutoResponse(
   }
 }
 
-// 승인된 규칙 캐시 조회 (2분 TTL)
-async function getApprovedRules(): Promise<AutoRule[]> {
+// 계정별 승인된 규칙 캐시 조회 (2분 TTL)
+async function getApprovedRules(accountId: string): Promise<AutoRule[]> {
   const now = Date.now();
-  if (cachedRules && now - cacheTimestamp < RULE_CACHE_TTL_MS) {
-    return cachedRules;
+  const cached = ruleCache.get(accountId);
+  if (cached && now - cached.timestamp < RULE_CACHE_TTL_MS) {
+    return cached.rules;
   }
 
   const { data } = await supabase
     .from('saju_cs_auto_rules')
     .select('*')
+    .eq('account_id', accountId)
     .eq('status', 'approved');
 
-  cachedRules = (data as AutoRule[]) || [];
-  cacheTimestamp = now;
-  return cachedRules;
+  const rules = (data as AutoRule[]) || [];
+  ruleCache.set(accountId, { rules, timestamp: now });
+  return rules;
 }
 
 // 캐시 무효화 (규칙 상태 변경 시 호출)
-export function invalidateRuleCache(): void {
-  cachedRules = null;
-  cacheTimestamp = 0;
+export function invalidateRuleCache(accountId?: string): void {
+  if (accountId) {
+    ruleCache.delete(accountId);
+  } else {
+    ruleCache.clear();
+  }
 }

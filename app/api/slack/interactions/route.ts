@@ -14,6 +14,7 @@ import {
   MESSAGES,
 } from '@/app/lib/report/reportService';
 import * as graphApi from '@/app/api/instagram/services/graphApi';
+import { resolveAccountById } from '@/app/lib/account/accountResolver';
 import type { SlackInteractionPayload } from '@/app/lib/types';
 
 // Slack signing secret 검증
@@ -68,6 +69,7 @@ export async function POST(request: NextRequest) {
     const action = payload.actions[0];
 
     if (action.action_id === 'open_response_modal' && payload.trigger_id) {
+      // metadata에 account_id 포함됨
       const metadata = JSON.parse(action.value);
       await openResponseModal(payload.trigger_id, metadata);
       return new NextResponse('', { status: 200 });
@@ -75,29 +77,29 @@ export async function POST(request: NextRequest) {
 
     // 카테고리 학습 승인
     if (action.action_id === 'approve_auto_rule') {
-      const category = action.value;
-      waitUntil(handleAutoRuleAction(category, true, payload.user.username, payload));
+      const { category, account_id } = JSON.parse(action.value);
+      waitUntil(handleAutoRuleAction(account_id, category, true, payload.user.username, payload));
       return new NextResponse('', { status: 200 });
     }
 
     // 카테고리 학습 거절
     if (action.action_id === 'reject_auto_rule') {
-      const category = action.value;
-      waitUntil(handleAutoRuleAction(category, false, payload.user.username, payload));
+      const { category, account_id } = JSON.parse(action.value);
+      waitUntil(handleAutoRuleAction(account_id, category, false, payload.user.username, payload));
       return new NextResponse('', { status: 200 });
     }
 
     // 건별 응답 승인 (보내기)
     if (action.action_id === 'send_proposed_response') {
-      const pendingId = action.value;
-      waitUntil(handleProposedResponseAction(pendingId, true, payload.user.username));
+      const { pending_id, account_id } = JSON.parse(action.value);
+      waitUntil(handleProposedResponseAction(account_id, pending_id, true, payload.user.username));
       return new NextResponse('', { status: 200 });
     }
 
     // 건별 응답 거절
     if (action.action_id === 'reject_proposed_response') {
-      const pendingId = action.value;
-      waitUntil(handleProposedResponseAction(pendingId, false, payload.user.username));
+      const { pending_id, account_id } = JSON.parse(action.value);
+      waitUntil(handleProposedResponseAction(account_id, pending_id, false, payload.user.username));
       return new NextResponse('', { status: 200 });
     }
 
@@ -106,6 +108,7 @@ export async function POST(request: NextRequest) {
       const metadata = JSON.parse(action.value);
       waitUntil(
         handleStartReportReissue(
+          metadata.account_id,
           metadata.conversation_id,
           metadata.instagram_user_id,
           payload.user.username
@@ -137,13 +140,20 @@ export async function POST(request: NextRequest) {
 }
 
 async function handleModalSubmission(
-  metadata: { conversation_id: string; instagram_user_id: string },
+  metadata: { conversation_id: string; instagram_user_id: string; account_id: string },
   responseText: string,
   respondedBy: string
 ) {
   try {
+    // 계정 조회
+    const account = await resolveAccountById(metadata.account_id);
+    if (!account) {
+      console.error('[SlackInteraction] Account not found:', metadata.account_id);
+      return;
+    }
+
     // 1. Instagram DM으로 답변 전송
-    await graphApi.sendMessage(metadata.instagram_user_id, responseText);
+    await graphApi.sendMessage(metadata.instagram_user_id, responseText, account.instagram_access_token);
 
     // 2. DB에 답변 메시지 저장
     const { data: lastMsg } = await supabase
@@ -213,6 +223,7 @@ async function handleModalSubmission(
 
 // 카테고리 학습 승인/거절 처리
 async function handleAutoRuleAction(
+  accountId: string,
   category: string,
   approved: boolean,
   respondedBy: string,
@@ -224,6 +235,7 @@ async function handleAutoRuleAction(
     const { data: rule } = await supabase
       .from('saju_cs_auto_rules')
       .select('id, slack_channel_id, slack_message_ts')
+      .eq('account_id', accountId)
       .eq('category', category)
       .eq('status', 'proposed')
       .maybeSingle();
@@ -241,7 +253,7 @@ async function handleAutoRuleAction(
       .eq('id', rule.id);
 
     // 캐시 무효화
-    invalidateRuleCache();
+    invalidateRuleCache(accountId);
 
     // Slack 메시지 업데이트
     if (rule.slack_channel_id && rule.slack_message_ts) {
@@ -262,6 +274,7 @@ async function handleAutoRuleAction(
 
 // 건별 응답 승인/거절 처리
 async function handleProposedResponseAction(
+  accountId: string,
   pendingId: string,
   approved: boolean,
   respondedBy: string
@@ -276,9 +289,16 @@ async function handleProposedResponseAction(
 
     if (!pending) return;
 
+    // 계정 조회
+    const account = await resolveAccountById(accountId);
+    if (!account) {
+      console.error('[SlackInteraction] Account not found:', accountId);
+      return;
+    }
+
     if (approved) {
       // Instagram DM 전송
-      await graphApi.sendMessage(pending.instagram_user_id, pending.proposed_response);
+      await graphApi.sendMessage(pending.instagram_user_id, pending.proposed_response, account.instagram_access_token);
 
       // 답변 메시지 DB 저장
       const { data: lastMsg } = await supabase
@@ -328,18 +348,26 @@ async function handleProposedResponseAction(
 
 // 리포트 재발급 시작
 async function handleStartReportReissue(
+  accountId: string,
   conversationId: string,
   instagramUserId: string,
   initiatedBy: string
 ) {
   try {
+    const account = await resolveAccountById(accountId);
+    if (!account) {
+      console.error('[SlackInteraction] Account not found:', accountId);
+      return;
+    }
+
     await createSession({
+      accountId: account.id,
       conversationId,
       instagramUserId,
       initiatedBy,
     });
 
-    await graphApi.sendMessage(instagramUserId, MESSAGES.askService);
+    await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
 
     console.log('[SlackInteraction] Report reissue started:', {
       conversationId,

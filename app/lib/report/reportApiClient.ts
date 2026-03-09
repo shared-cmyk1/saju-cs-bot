@@ -1,15 +1,3 @@
-function getApiUrl(): string {
-  const url = process.env.SAJU_REPORT_API_URL;
-  if (!url) throw new Error('Missing SAJU_REPORT_API_URL');
-  return url;
-}
-
-function getApiKey(): string {
-  const key = process.env.SAJU_REPORT_API_KEY;
-  if (!key) throw new Error('Missing SAJU_REPORT_API_KEY');
-  return key;
-}
-
 // 일반 사주 요청
 export interface CreateReportParams {
   goodsType: string;
@@ -48,13 +36,15 @@ export interface ReportStatusResponse {
 }
 
 export async function createReport(
-  params: CreateReportParams | CreateReunionReportParams
+  params: CreateReportParams | CreateReunionReportParams,
+  apiUrl: string,
+  apiKey: string
 ): Promise<CreateReportResponse> {
-  const response = await fetch(`${getApiUrl()}/api/external/report`, {
+  const response = await fetch(`${apiUrl}/api/external/report`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': getApiKey(),
+      'x-api-key': apiKey,
     },
     body: JSON.stringify(params),
   });
@@ -69,13 +59,15 @@ export async function createReport(
 }
 
 export async function checkReportStatus(
-  shopOrderNo: string
+  shopOrderNo: string,
+  apiUrl: string,
+  apiKey: string
 ): Promise<ReportStatusResponse> {
   const response = await fetch(
-    `${getApiUrl()}/api/external/report/status?shopOrderNo=${encodeURIComponent(shopOrderNo)}`,
+    `${apiUrl}/api/external/report/status?shopOrderNo=${encodeURIComponent(shopOrderNo)}`,
     {
       headers: {
-        'x-api-key': getApiKey(),
+        'x-api-key': apiKey,
       },
     }
   );

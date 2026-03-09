@@ -1,21 +1,16 @@
 const GRAPH_API_BASE = 'https://graph.instagram.com/v21.0';
 
-function getAccessToken(): string {
-  const token = process.env.INSTAGRAM_USER_ACCESS_TOKEN;
-  if (!token) throw new Error('Missing INSTAGRAM_USER_ACCESS_TOKEN');
-  return token;
-}
-
 // Instagram DM 텍스트 메시지 전송
 export async function sendMessage(
   instagramUserId: string,
-  text: string
+  text: string,
+  accessToken: string
 ): Promise<void> {
   const response = await fetch(`${GRAPH_API_BASE}/me/messages`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${getAccessToken()}`,
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify({
       recipient: { id: instagramUserId },
@@ -32,14 +27,15 @@ export async function sendMessage(
 
 // Instagram 사용자 정보 조회
 export async function getUserInfo(
-  instagramUserId: string
+  instagramUserId: string,
+  accessToken: string
 ): Promise<{ username?: string }> {
   try {
     const response = await fetch(
       `${GRAPH_API_BASE}/${instagramUserId}?fields=username`,
       {
         headers: {
-          Authorization: `Bearer ${getAccessToken()}`,
+          Authorization: `Bearer ${accessToken}`,
         },
       }
     );

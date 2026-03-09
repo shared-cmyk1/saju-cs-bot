@@ -2,13 +2,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import { supabase } from '@/app/lib/supabase/client';
 import * as graphApi from '@/app/api/instagram/services/graphApi';
 import { createReport, type CreateReunionReportParams } from './reportApiClient';
-import type { ReportSession, GoodsType, PersonInfo } from '@/app/lib/types';
+import type { ReportSession, GoodsType, PersonInfo, AccountConfig } from '@/app/lib/types';
 
 const anthropic = new Anthropic();
 
-// === 서비스명 → goodsType 매핑 ===
+// === 기본 서비스명 → goodsType 매핑 ===
 
-const SERVICE_MAP: Record<string, GoodsType> = {
+const DEFAULT_SERVICE_MAP: Record<string, GoodsType> = {
   운해선생: 'CLASSIC',
   윤화보살: 'ROMANTIC',
   연애사주: 'ROMANTIC',
@@ -40,6 +40,20 @@ const MESSAGES = {
   serviceNotFound:
     '해당 서비스를 찾지 못했어요.\n아래 서비스 중 하나를 선택해주세요:\n\n• 운해선생\n• 윤화보살 / 연애사주\n• 속박경 / 29금사주\n• 청연보살 / 재회사주 / 재연도',
 };
+
+function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
+  if (account.service_map) {
+    return account.service_map as Record<string, GoodsType>;
+  }
+  return DEFAULT_SERVICE_MAP;
+}
+
+function getReportApiConfig(account: AccountConfig): { url: string; key: string } {
+  const url = account.report_api_url || process.env.SAJU_REPORT_API_URL;
+  const key = account.report_api_key || process.env.SAJU_REPORT_API_KEY;
+  if (!url || !key) throw new Error('Missing report API config');
+  return { url, key };
+}
 
 function formatConfirmation(
   goodsType: GoodsType,
@@ -93,6 +107,7 @@ export async function getActiveSession(
 }
 
 export async function createSession(params: {
+  accountId: string;
   conversationId: string;
   instagramUserId: string;
   initiatedBy: string;
@@ -100,6 +115,7 @@ export async function createSession(params: {
   const { data, error } = await supabase
     .from('saju_cs_report_sessions')
     .insert({
+      account_id: params.accountId,
       conversation_id: params.conversationId,
       instagram_user_id: params.instagramUserId,
       step: 'awaiting_service',
@@ -126,35 +142,38 @@ async function updateSession(
 
 export async function handleSessionMessage(
   session: ReportSession,
-  messageText: string
+  messageText: string,
+  account: AccountConfig
 ): Promise<void> {
   const userId = session.instagram_user_id;
+  const token = account.instagram_access_token;
 
   // "취소" 감지
   if (/취소|그만|안할래|안 할래/.test(messageText)) {
     await updateSession(session.id, { step: 'expired' });
-    await graphApi.sendMessage(userId, MESSAGES.cancelled);
+    await graphApi.sendMessage(userId, MESSAGES.cancelled, token);
     return;
   }
 
   switch (session.step) {
     case 'awaiting_service':
-      await handleAwaitingService(session, messageText);
+      await handleAwaitingService(session, messageText, account);
       break;
     case 'awaiting_info':
-      await handleAwaitingInfo(session, messageText);
+      await handleAwaitingInfo(session, messageText, account);
       break;
     case 'awaiting_partner_info':
-      await handleAwaitingPartnerInfo(session, messageText);
+      await handleAwaitingPartnerInfo(session, messageText, account);
       break;
     case 'confirming':
-      await handleConfirming(session, messageText);
+      await handleConfirming(session, messageText, account);
       break;
     case 'generating':
       // 생성 중에는 대기 안내
       await graphApi.sendMessage(
         userId,
-        '리포트 생성 중이에요! 완료되면 바로 알려드릴게요 😊'
+        '리포트 생성 중이에요! 완료되면 바로 알려드릴게요 😊',
+        token
       );
       break;
   }
@@ -162,12 +181,14 @@ export async function handleSessionMessage(
 
 async function handleAwaitingService(
   session: ReportSession,
-  messageText: string
+  messageText: string,
+  account: AccountConfig
 ): Promise<void> {
-  const goodsType = await mapServiceToGoodsType(messageText);
+  const serviceMap = getServiceMap(account);
+  const goodsType = await mapServiceToGoodsType(messageText, serviceMap);
 
   if (!goodsType) {
-    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.serviceNotFound);
+    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.serviceNotFound, account.instagram_access_token);
     return;
   }
 
@@ -175,19 +196,21 @@ async function handleAwaitingService(
     goods_type: goodsType,
     step: 'awaiting_info',
   });
-  await graphApi.sendMessage(session.instagram_user_id, MESSAGES.askInfo);
+  await graphApi.sendMessage(session.instagram_user_id, MESSAGES.askInfo, account.instagram_access_token);
 }
 
 async function handleAwaitingInfo(
   session: ReportSession,
-  messageText: string
+  messageText: string,
+  account: AccountConfig
 ): Promise<void> {
   const info = await extractPersonInfo(messageText);
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.extractionFailed
+      MESSAGES.extractionFailed,
+      account.instagram_access_token
     );
     return;
   }
@@ -199,7 +222,8 @@ async function handleAwaitingInfo(
     await updateSession(session.id, { step: 'awaiting_partner_info', my_info: info });
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.askPartnerInfo
+      MESSAGES.askPartnerInfo,
+      account.instagram_access_token
     );
     return;
   }
@@ -207,19 +231,21 @@ async function handleAwaitingInfo(
   // 확인 단계로 이동
   await updateSession(session.id, { step: 'confirming', my_info: info });
   const confirmMsg = formatConfirmation(session.goods_type!, info);
-  await graphApi.sendMessage(session.instagram_user_id, confirmMsg);
+  await graphApi.sendMessage(session.instagram_user_id, confirmMsg, account.instagram_access_token);
 }
 
 async function handleAwaitingPartnerInfo(
   session: ReportSession,
-  messageText: string
+  messageText: string,
+  account: AccountConfig
 ): Promise<void> {
   const info = await extractPersonInfo(messageText);
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.extractionFailed
+      MESSAGES.extractionFailed,
+      account.instagram_access_token
     );
     return;
   }
@@ -234,18 +260,19 @@ async function handleAwaitingPartnerInfo(
     session.my_info,
     info
   );
-  await graphApi.sendMessage(session.instagram_user_id, confirmMsg);
+  await graphApi.sendMessage(session.instagram_user_id, confirmMsg, account.instagram_access_token);
 }
 
 async function handleConfirming(
   session: ReportSession,
-  messageText: string
+  messageText: string,
+  account: AccountConfig
 ): Promise<void> {
   const normalized = messageText.trim();
 
   // "네" → 리포트 생성
   if (/^(네|넵|넹|예|응|맞아|맞습니다|ㅇ|ㅇㅇ|ok|yes)$/i.test(normalized)) {
-    await submitReport(session);
+    await submitReport(session, account);
     return;
   }
 
@@ -256,14 +283,15 @@ async function handleConfirming(
       my_info: {} as PersonInfo,
       partner_info: {} as PersonInfo,
     });
-    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.askInfo);
+    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.askInfo, account.instagram_access_token);
     return;
   }
 
   // 이해 못함 → 다시 물어보기
   await graphApi.sendMessage(
     session.instagram_user_id,
-    '맞으면 "네", 수정이 필요하면 "아니요"라고 답해주세요.'
+    '맞으면 "네", 수정이 필요하면 "아니요"라고 답해주세요.',
+    account.instagram_access_token
   );
 }
 
@@ -303,10 +331,13 @@ export async function extractPersonInfo(
 }
 
 export async function mapServiceToGoodsType(
-  messageText: string
+  messageText: string,
+  serviceMap?: Record<string, GoodsType>
 ): Promise<GoodsType | null> {
+  const map = serviceMap || DEFAULT_SERVICE_MAP;
+
   // 직접 매칭 먼저 시도
-  for (const [keyword, goodsType] of Object.entries(SERVICE_MAP)) {
+  for (const [keyword, goodsType] of Object.entries(map)) {
     if (messageText.includes(keyword)) {
       return goodsType;
     }
@@ -314,7 +345,7 @@ export async function mapServiceToGoodsType(
 
   // AI 퍼지 매칭
   try {
-    const serviceList = Object.keys(SERVICE_MAP).join(', ');
+    const serviceList = Object.keys(map).join(', ');
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 50,
@@ -331,7 +362,7 @@ export async function mapServiceToGoodsType(
         : '';
 
     if (text === '없음') return null;
-    return SERVICE_MAP[text] || null;
+    return map[text] || null;
   } catch (error) {
     console.error('[ReportService] mapServiceToGoodsType error:', error);
     return null;
@@ -340,7 +371,7 @@ export async function mapServiceToGoodsType(
 
 // === 리포트 생성 ===
 
-async function submitReport(session: ReportSession): Promise<void> {
+async function submitReport(session: ReportSession, account: AccountConfig): Promise<void> {
   try {
     const myInfo = session.my_info;
 
@@ -365,7 +396,8 @@ async function submitReport(session: ReportSession): Promise<void> {
             birthTime: myInfo.birthTime || 'unknown',
           };
 
-    const result = await createReport(params);
+    const apiConfig = getReportApiConfig(account);
+    const result = await createReport(params, apiConfig.url, apiConfig.key);
 
     await updateSession(session.id, {
       step: 'completed',
@@ -375,12 +407,13 @@ async function submitReport(session: ReportSession): Promise<void> {
 
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.generating(result.reportUrl)
+      MESSAGES.generating(result.reportUrl),
+      account.instagram_access_token
     );
   } catch (error) {
     console.error('[ReportService] submitReport error:', error);
     await updateSession(session.id, { step: 'failed' });
-    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.failed);
+    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.failed, account.instagram_access_token);
   }
 }
 

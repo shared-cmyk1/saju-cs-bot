@@ -7,12 +7,6 @@ function getSlackToken(): string {
   return token;
 }
 
-function getChannelId(): string {
-  const id = process.env.SLACK_CS_CHANNEL_ID;
-  if (!id) throw new Error('Missing SLACK_CS_CHANNEL_ID');
-  return id;
-}
-
 // Slack Web API 호출 헬퍼
 async function slackAPI(method: string, body: Record<string, unknown>) {
   const response = await fetch(`https://slack.com/api/${method}`, {
@@ -34,8 +28,6 @@ async function slackAPI(method: string, body: Record<string, unknown>) {
 
 // 에스컬레이션 메시지를 Slack에 포스트
 export async function postEscalation(params: SlackEscalationParams): Promise<void> {
-  const channelId = getChannelId();
-
   const blocks = [
     {
       type: 'header',
@@ -72,6 +64,7 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
           value: JSON.stringify({
             conversation_id: params.conversationId,
             instagram_user_id: params.instagramUserId,
+            account_id: params.accountId,
           }),
         },
       ],
@@ -79,13 +72,12 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
   ];
 
   const result = await slackAPI('chat.postMessage', {
-    channel: channelId,
+    channel: params.channelId,
     text: `CS 에스컬레이션: @${params.username || '알 수 없음'} - "${params.userQuestion}"`,
     blocks,
   });
 
   // DB에 에스컬레이션 레코드 생성
-  // user_message_id 조회 (가장 최근 user 메시지)
   const { data: lastUserMsg } = await supabase
     .from('saju_cs_messages')
     .select('id')
@@ -97,6 +89,7 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
 
   if (lastUserMsg) {
     await supabase.from('saju_cs_escalations').insert({
+      account_id: params.accountId,
       conversation_id: params.conversationId,
       user_message_id: lastUserMsg.id,
       slack_channel_id: result.channel,
@@ -108,12 +101,12 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
 
 // 이미 에스컬레이션 진행 중인 대화에서 추가 메시지를 Slack에 전달
 export async function postFollowUpMessage(params: {
+  channelId: string;
   username?: string | null;
   userQuestion: string;
 }): Promise<void> {
-  const channelId = getChannelId();
   await slackAPI('chat.postMessage', {
-    channel: channelId,
+    channel: params.channelId,
     text: `📩 추가 메시지 | @${params.username || '알 수 없음'}: "${params.userQuestion}"`,
   });
 }
@@ -156,10 +149,10 @@ export async function updateEscalationMessage(
 
 // 카테고리 학습 완료 제안 ("이 카테고리 학습 완료됐어요" + 승인/거절)
 export async function postAutoRuleProposal(
-  analysis: CategoryAnalysis
+  analysis: CategoryAnalysis,
+  channelId: string,
+  accountId: string
 ): Promise<{ channelId: string; messageTs: string }> {
-  const channelId = getChannelId();
-
   const blocks = [
     {
       type: 'header',
@@ -194,14 +187,14 @@ export async function postAutoRuleProposal(
           text: { type: 'plain_text', text: '승인', emoji: true },
           style: 'primary',
           action_id: 'approve_auto_rule',
-          value: analysis.category,
+          value: JSON.stringify({ category: analysis.category, account_id: accountId }),
         },
         {
           type: 'button',
           text: { type: 'plain_text', text: '거절', emoji: true },
           style: 'danger',
           action_id: 'reject_auto_rule',
-          value: analysis.category,
+          value: JSON.stringify({ category: analysis.category, account_id: accountId }),
         },
       ],
     },
@@ -218,6 +211,8 @@ export async function postAutoRuleProposal(
 
 // 건별 응답 제안 ("이 고객에게 이렇게 답변할까요?" + 보내기/거절)
 export async function postResponseProposal(params: {
+  channelId: string;
+  accountId: string;
   pendingResponseId: string;
   username: string | null;
   customerMessage: string;
@@ -226,22 +221,20 @@ export async function postResponseProposal(params: {
   conversationId?: string;
   instagramUserId?: string;
 }): Promise<{ channelId: string; messageTs: string }> {
-  const channelId = getChannelId();
-
   const actionButtons: Record<string, unknown>[] = [
     {
       type: 'button',
       text: { type: 'plain_text', text: '보내기', emoji: true },
       style: 'primary',
       action_id: 'send_proposed_response',
-      value: params.pendingResponseId,
+      value: JSON.stringify({ pending_id: params.pendingResponseId, account_id: params.accountId }),
     },
     {
       type: 'button',
       text: { type: 'plain_text', text: '거절', emoji: true },
       style: 'danger',
       action_id: 'reject_proposed_response',
-      value: params.pendingResponseId,
+      value: JSON.stringify({ pending_id: params.pendingResponseId, account_id: params.accountId }),
     },
   ];
 
@@ -258,6 +251,7 @@ export async function postResponseProposal(params: {
       value: JSON.stringify({
         conversation_id: params.conversationId,
         instagram_user_id: params.instagramUserId,
+        account_id: params.accountId,
       }),
     });
   }
@@ -301,7 +295,7 @@ export async function postResponseProposal(params: {
   ];
 
   const result = await slackAPI('chat.postMessage', {
-    channel: channelId,
+    channel: params.channelId,
     text: `자동 응답 제안 | @${params.username || '알 수 없음'}: "${params.customerMessage}"`,
     blocks,
   });

@@ -11,18 +11,34 @@ import {
   getActiveSession,
   handleSessionMessage,
 } from '@/app/lib/report/reportService';
-import type { InstagramMessageEvent, Conversation } from '@/app/lib/types';
+import type { InstagramMessageEvent, Conversation, AccountConfig } from '@/app/lib/types';
 
-function isBusinessHours(): boolean {
+function isBusinessHours(account: AccountConfig): boolean {
+  const tz = account.business_hours_timezone || 'Asia/Seoul';
   const now = new Date();
-  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-  const day = kst.getUTCDay(); // 0=Sun, 6=Sat
-  const hour = kst.getUTCHours();
-  return day >= 1 && day <= 5 && hour >= 10 && hour < 19;
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: 'numeric',
+    hour12: false,
+    weekday: 'short',
+  });
+  const parts = formatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === 'hour')?.value || '0');
+  const weekdayStr = parts.find((p) => p.type === 'weekday')?.value || '';
+  const dayMap: Record<string, number> = {
+    Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
+  };
+  const day = dayMap[weekdayStr] ?? 0;
+  const businessDays = account.business_days || [1, 2, 3, 4, 5];
+  return (
+    businessDays.includes(day) &&
+    hour >= account.business_hours_start &&
+    hour < account.business_hours_end
+  );
 }
 
 export const messageService = {
-  async handleMessage(event: InstagramMessageEvent): Promise<void> {
+  async handleMessage(event: InstagramMessageEvent, account: AccountConfig): Promise<void> {
     const instagramUserId = event.sender.id;
     const messageText = event.message?.text;
     const messageMid = event.message?.mid;
@@ -45,7 +61,7 @@ export const messageService = {
     }
 
     // 3. 대화 생성/조회 + 메시지 저장
-    const conversation = await this.getOrCreateConversation(instagramUserId);
+    const conversation = await this.getOrCreateConversation(instagramUserId, account);
     const nextIndex = await this.getNextMessageIndex(conversation.id);
 
     await supabase.from('saju_cs_messages').insert({
@@ -60,7 +76,7 @@ export const messageService = {
     // 4. 활성 리포트 세션 체크 → 세션이 있으면 세션 핸들러로 처리
     const activeSession = await getActiveSession(conversation.id);
     if (activeSession) {
-      await handleSessionMessage(activeSession, messageText);
+      await handleSessionMessage(activeSession, messageText, account);
       await supabase
         .from('saju_cs_conversations')
         .update({ updated_at: new Date().toISOString() })
@@ -78,12 +94,13 @@ export const messageService = {
 
     if (pendingEscalation) {
       await postFollowUpMessage({
+        channelId: account.slack_channel_id,
         username: conversation.instagram_username,
         userQuestion: messageText,
       });
     } else {
       // 5. 승인된 자동 규칙 매칭 시도
-      const match = await matchRule(messageText);
+      const match = await matchRule(account.id, messageText);
 
       if (match) {
         // 규칙 매칭 → Slack에 자동 응답 제안 (보내기/거절 버튼)
@@ -92,6 +109,7 @@ export const messageService = {
         const { data: pending, error } = await supabase
           .from('saju_cs_pending_responses')
           .insert({
+            account_id: account.id,
             rule_id: match.rule.id,
             conversation_id: conversation.id,
             instagram_user_id: instagramUserId,
@@ -104,6 +122,8 @@ export const messageService = {
 
         if (!error && pending) {
           const { channelId, messageTs } = await postResponseProposal({
+            channelId: account.slack_channel_id,
+            accountId: account.id,
             pendingResponseId: pending.id,
             username: conversation.instagram_username,
             customerMessage: messageText,
@@ -124,6 +144,8 @@ export const messageService = {
       } else {
         // 6. 매칭 없음 → Slack에 에스컬레이션
         await postEscalation({
+          accountId: account.id,
+          channelId: account.slack_channel_id,
           conversationId: conversation.id,
           instagramUserId,
           username: conversation.instagram_username,
@@ -133,11 +155,10 @@ export const messageService = {
     }
 
     // 7. 업무 외 시간 → 안내 메시지 전송 (하루 1회)
-    if (!isBusinessHours()) {
-      const now = new Date();
-      const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
-      const todayKST = kst.toISOString().slice(0, 10); // YYYY-MM-DD in KST
-      const todayStartUTC = new Date(`${todayKST}T00:00:00+09:00`).toISOString();
+    if (!isBusinessHours(account)) {
+      const tz = account.business_hours_timezone || 'Asia/Seoul';
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: tz }); // YYYY-MM-DD
+      const todayStartUTC = new Date(`${todayStr}T00:00:00+09:00`).toISOString();
 
       const { count } = await supabase
         .from('saju_cs_messages')
@@ -149,8 +170,8 @@ export const messageService = {
       const alreadyNotifiedToday = (count ?? 0) > 0;
 
       if (!alreadyNotifiedToday) {
-        const offHoursMsg = templates.getOffHoursMessage();
-        await graphApi.sendMessage(instagramUserId, offHoursMsg);
+        const offHoursMsg = account.off_hours_message || templates.getOffHoursMessage();
+        await graphApi.sendMessage(instagramUserId, offHoursMsg, account.instagram_access_token);
         await supabase.from('saju_cs_messages').insert({
           conversation_id: conversation.id,
           message_index: nextIndex + 1,
@@ -167,20 +188,25 @@ export const messageService = {
       .eq('id', conversation.id);
   },
 
-  async getOrCreateConversation(instagramUserId: string): Promise<Conversation> {
+  async getOrCreateConversation(
+    instagramUserId: string,
+    account: AccountConfig
+  ): Promise<Conversation> {
     const { data: existing } = await supabase
       .from('saju_cs_conversations')
       .select('*')
+      .eq('account_id', account.id)
       .eq('instagram_user_id', instagramUserId)
       .maybeSingle();
 
     if (existing) return existing as Conversation;
 
-    const userInfo = await graphApi.getUserInfo(instagramUserId);
+    const userInfo = await graphApi.getUserInfo(instagramUserId, account.instagram_access_token);
 
     const { data: created, error } = await supabase
       .from('saju_cs_conversations')
       .insert({
+        account_id: account.id,
         instagram_user_id: instagramUserId,
         instagram_username: userInfo.username || null,
       })
