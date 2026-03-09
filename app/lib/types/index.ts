@@ -140,12 +140,25 @@ export interface InstagramMessageEvent {
   };
 }
 
+export interface InstagramCommentEvent {
+  field: 'comments';
+  value: {
+    from: { id: string; username?: string };
+    media: { id: string };
+    id: string;
+    text: string;
+    timestamp: string;
+    parent_id?: string;
+  };
+}
+
 export interface InstagramWebhookBody {
   object: string;
   entry: Array<{
     id: string;
     time: number;
     messaging?: InstagramMessageEvent[];
+    changes?: InstagramCommentEvent[];
   }>;
 }
 

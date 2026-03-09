@@ -1,5 +1,6 @@
 import type { InstagramWebhookBody, InstagramMessageEvent, AccountConfig } from '@/app/lib/types';
 import { messageService } from './messageService';
+import { handleComment } from './commentService';
 import { supabase } from '@/app/lib/supabase/client';
 import { updateEscalationMessage } from '@/app/lib/slack/slackClient';
 import { captureLearningPair } from '@/app/lib/ai/learningService';
@@ -13,6 +14,19 @@ export const webhookHandler = {
       if (!account) {
         console.warn('[WebhookHandler] Unknown account for entry.id:', entry.id);
         continue;
+      }
+
+      // 댓글 이벤트 처리
+      if (entry.changes) {
+        for (const change of entry.changes) {
+          if (change.field === 'comments') {
+            try {
+              await handleComment(change.value, account);
+            } catch (error) {
+              console.error('[WebhookHandler] Comment handling error:', error);
+            }
+          }
+        }
       }
 
       if (!entry.messaging) continue;
