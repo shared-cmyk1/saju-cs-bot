@@ -149,8 +149,8 @@ ${previewLinks}
 
 링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
 
-    // DM 발송
-    await graphApi.sendMessage(userId, dmMessage, account.instagram_access_token);
+    // DM 발송 (Private Reply - 댓글 기반이라 24시간 제한 없음)
+    await graphApi.sendPrivateReply(commentId, dmMessage, account.instagram_access_token);
 
     // 댓글에 대댓글 달기
     try {

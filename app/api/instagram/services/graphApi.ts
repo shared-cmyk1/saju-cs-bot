@@ -25,7 +25,7 @@ export async function sendMessage(
   }
 }
 
-// Instagram 댓글에 답글 달기
+// Instagram 댓글에 답글 달기 (공개 대댓글)
 export async function replyToComment(
   commentId: string,
   text: string,
@@ -44,6 +44,32 @@ export async function replyToComment(
     const errorText = await response.text();
     console.error('[GraphAPI] replyToComment failed:', errorText);
     throw new Error(`Failed to reply to comment: ${response.status}`);
+  }
+}
+
+// Instagram 댓글에 비공개 답장 (Private Reply → DM)
+// 24시간 메시징 윈도우 제한 없이 댓글 작성자에게 DM 전송 가능
+export async function sendPrivateReply(
+  commentId: string,
+  text: string,
+  accessToken: string
+): Promise<void> {
+  const response = await fetch(`${GRAPH_API_BASE}/me/messages`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      recipient: { comment_id: commentId },
+      message: { text },
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[GraphAPI] sendPrivateReply failed:', errorText);
+    throw new Error(`Failed to send private reply: ${response.status}`);
   }
 }
 
