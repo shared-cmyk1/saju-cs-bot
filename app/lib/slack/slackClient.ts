@@ -67,6 +67,16 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
             account_id: params.accountId,
           }),
         },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+          action_id: 'start_report_reissue',
+          value: JSON.stringify({
+            conversation_id: params.conversationId,
+            instagram_user_id: params.instagramUserId,
+            account_id: params.accountId,
+          }),
+        },
       ],
     },
   ];
