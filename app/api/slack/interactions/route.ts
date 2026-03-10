@@ -346,7 +346,7 @@ async function handleProposedResponseAction(
   }
 }
 
-// 리포트 재발급 시작
+// 리포트 재발급 시작 — 대화 이력에서 서비스/생년월일 자동 유추
 async function handleStartReportReissue(
   accountId: string,
   conversationId: string,
@@ -360,18 +360,81 @@ async function handleStartReportReissue(
       return;
     }
 
-    await createSession({
+    // 대화 이력 조회 (최근 20개)
+    const { data: messages } = await supabase
+      .from('saju_cs_messages')
+      .select('role, content')
+      .eq('conversation_id', conversationId)
+      .order('message_index', { ascending: true })
+      .limit(20);
+
+    const conversationHistory = (messages || [])
+      .filter((m) => m.role === 'user')
+      .map((m) => m.content)
+      .join('\n');
+
+    // 대화 이력에서 서비스/개인정보 유추
+    let inferredGoodsType: string | null = null;
+    let inferredInfo: { name?: string; gender?: string; birthdate?: string; birthTime?: string } | null = null;
+
+    if (conversationHistory.length > 0) {
+      const { mapServiceToGoodsType, extractPersonInfo } = await import('@/app/lib/report/reportService');
+
+      const [goodsType, personInfo] = await Promise.all([
+        mapServiceToGoodsType(conversationHistory),
+        extractPersonInfo(conversationHistory),
+      ]);
+
+      inferredGoodsType = goodsType;
+      inferredInfo = personInfo;
+    }
+
+    // 세션 생성
+    const session = await createSession({
       accountId: account.id,
       conversationId,
       instagramUserId,
       initiatedBy,
     });
 
-    await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+    // 유추된 정보가 있으면 세션에 반영하고 단계 건너뛰기
+    if (inferredGoodsType && inferredInfo?.name && inferredInfo?.birthdate) {
+      // 서비스 + 개인정보 모두 유추됨 → 바로 확인 단계
+      await supabase
+        .from('saju_cs_report_sessions')
+        .update({
+          goods_type: inferredGoodsType,
+          my_info: inferredInfo,
+          step: 'confirming',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', session.id);
+
+      const genderLabel = inferredInfo.gender === '남' ? '남성' : inferredInfo.gender === '여' ? '여성' : inferredInfo.gender || '';
+      const confirmMsg = `대화 내용을 바탕으로 정보를 확인했어요!\n\n서비스: ${inferredGoodsType}\n이름: ${inferredInfo.name}\n성별: ${genderLabel}\n생년월일: ${inferredInfo.birthdate}\n태어난 시간: ${inferredInfo.birthTime || '모름'}\n\n맞으면 "네", 수정이 필요하면 "아니요"라고 답해주세요.`;
+      await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
+    } else if (inferredGoodsType) {
+      // 서비스만 유추됨 → 개인정보 질문
+      await supabase
+        .from('saju_cs_report_sessions')
+        .update({
+          goods_type: inferredGoodsType,
+          step: 'awaiting_info',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', session.id);
+
+      await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
+    } else {
+      // 유추 실패 → 처음부터 질문
+      await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+    }
 
     console.log('[SlackInteraction] Report reissue started:', {
       conversationId,
       initiatedBy,
+      inferredGoodsType,
+      inferredInfo: inferredInfo ? `${inferredInfo.name} ${inferredInfo.birthdate}` : null,
     });
   } catch (error) {
     console.error('[SlackInteraction] Report reissue error:', error);

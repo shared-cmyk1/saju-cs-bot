@@ -97,6 +97,9 @@ export const messageService = {
         channelId: account.slack_channel_id,
         username: conversation.instagram_username,
         userQuestion: messageText,
+        conversationId: conversation.id,
+        instagramUserId: instagramUserId,
+        accountId: account.id,
       });
     } else {
       // 5. 승인된 자동 규칙 매칭 시도

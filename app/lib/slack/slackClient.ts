@@ -114,10 +114,53 @@ export async function postFollowUpMessage(params: {
   channelId: string;
   username?: string | null;
   userQuestion: string;
+  conversationId?: string;
+  instagramUserId?: string;
+  accountId?: string;
 }): Promise<void> {
+  const blocks: Record<string, unknown>[] = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `📩 *추가 메시지* | @${params.username || '알 수 없음'}\n>${params.userQuestion}`,
+      },
+    },
+  ];
+
+  if (params.conversationId && params.instagramUserId && params.accountId) {
+    blocks.push({
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '답변하기', emoji: true },
+          style: 'primary',
+          action_id: 'open_response_modal',
+          value: JSON.stringify({
+            conversation_id: params.conversationId,
+            instagram_user_id: params.instagramUserId,
+            account_id: params.accountId,
+          }),
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+          action_id: 'start_report_reissue',
+          value: JSON.stringify({
+            conversation_id: params.conversationId,
+            instagram_user_id: params.instagramUserId,
+            account_id: params.accountId,
+          }),
+        },
+      ],
+    });
+  }
+
   await slackAPI('chat.postMessage', {
     channel: params.channelId,
     text: `📩 추가 메시지 | @${params.username || '알 수 없음'}: "${params.userQuestion}"`,
+    blocks,
   });
 }
 
