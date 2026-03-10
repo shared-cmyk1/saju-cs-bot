@@ -1,0 +1,14 @@
+CREATE TABLE saju_cs_accounts (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), slug TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, instagram_business_account_id TEXT NOT NULL UNIQUE, instagram_access_token TEXT NOT NULL, instagram_username TEXT, slack_channel_id TEXT NOT NULL, faq_content TEXT, business_hours_timezone TEXT NOT NULL DEFAULT 'Asia/Seoul', business_hours_start INTEGER NOT NULL DEFAULT 10, business_hours_end INTEGER NOT NULL DEFAULT 19, business_days INTEGER[] NOT NULL DEFAULT '{1,2,3,4,5}', off_hours_message TEXT, report_api_url TEXT, report_api_key TEXT, service_map JSONB, is_active BOOLEAN NOT NULL DEFAULT true, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+CREATE INDEX idx_accounts_ig_id ON saju_cs_accounts(instagram_business_account_id);
+ALTER TABLE saju_cs_conversations ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+ALTER TABLE saju_cs_escalations ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+ALTER TABLE saju_cs_learning_pairs ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+ALTER TABLE saju_cs_auto_rules ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+ALTER TABLE saju_cs_pending_responses ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+ALTER TABLE saju_cs_report_sessions ADD COLUMN account_id UUID REFERENCES saju_cs_accounts(id);
+CREATE INDEX idx_conversations_account ON saju_cs_conversations(account_id);
+CREATE INDEX idx_escalations_account ON saju_cs_escalations(account_id);
+CREATE INDEX idx_learning_pairs_account ON saju_cs_learning_pairs(account_id);
+CREATE INDEX idx_auto_rules_account ON saju_cs_auto_rules(account_id);
+CREATE INDEX idx_pending_responses_account ON saju_cs_pending_responses(account_id);
+CREATE INDEX idx_report_sessions_account ON saju_cs_report_sessions(account_id);
