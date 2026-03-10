@@ -141,15 +141,27 @@ export async function handleComment(
       .map((p) => `${p.title}: ${p.previewUrl}`)
       .join('\n');
 
-    const dmMessage = `안녕하세요${username ? ` @${username}` : ''}님! 😊
-댓글에 남겨주신 생년월일로 사주 미리보기를 준비했어요 ✨
+    const dmMessage = `안녕하세요${username ? ` @${username}` : ''}님! 🔮
+
+${account.display_name} 보고서 미리보기 링크를 전달드립니다!
 
 ${previewLinks}
 
-링크를 눌러 나만의 사주 결과를 확인해보세요! 🔮`;
+링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
 
     // DM 발송
     await graphApi.sendMessage(userId, dmMessage, account.instagram_access_token);
+
+    // 댓글에 대댓글 달기
+    try {
+      await graphApi.replyToComment(
+        commentId,
+        `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`,
+        account.instagram_access_token
+      );
+    } catch (replyError) {
+      console.error('[CommentService] Reply to comment failed:', replyError);
+    }
 
     // 성공 기록
     await supabase.from('saju_cs_comment_reports').insert({

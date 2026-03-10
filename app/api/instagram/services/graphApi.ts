@@ -25,6 +25,28 @@ export async function sendMessage(
   }
 }
 
+// Instagram 댓글에 답글 달기
+export async function replyToComment(
+  commentId: string,
+  text: string,
+  accessToken: string
+): Promise<void> {
+  const response = await fetch(`${GRAPH_API_BASE}/${commentId}/replies`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ message: text }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[GraphAPI] replyToComment failed:', errorText);
+    throw new Error(`Failed to reply to comment: ${response.status}`);
+  }
+}
+
 // Instagram 사용자 정보 조회
 export async function getUserInfo(
   instagramUserId: string,
