@@ -103,13 +103,18 @@ export async function handleComment(
 
   // 미리보기 API 호출 (이름은 인스타 닉네임, REUNION 제외)
   try {
+    // 계정별 댓글 미리보기 goodsTypes 설정
+    // service_map에 comment_goods_types가 있으면 사용, 없으면 기본값
+    const commentGoodsTypes = (account.service_map as Record<string, unknown>)?.comment_goods_types as string[] | undefined
+      || ['CLASSIC', 'ROMANTIC', 'SPICYSAJU'];
+
     const previewResult = await createPreview(
       {
         name: username || '고객',
         gender: extraction.gender || undefined,
         birthdate: extraction.birthdate,
         birthTime: extraction.birthTime || undefined,
-        goodsTypes: ['CLASSIC', 'ROMANTIC', 'SPICYSAJU'],
+        goodsTypes: commentGoodsTypes,
       },
       account.report_api_url,
       account.report_api_key
