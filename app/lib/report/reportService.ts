@@ -335,15 +335,17 @@ export async function mapServiceToGoodsType(
   serviceMap?: Record<string, GoodsType>
 ): Promise<GoodsType | null> {
   const map = serviceMap || DEFAULT_SERVICE_MAP;
+  const normalized = messageText.replace(/\s+/g, '').toLowerCase();
 
-  // 직접 매칭 먼저 시도
+  // 1. 직접 매칭: 메시지에 키워드가 포함되어 있거나, 키워드에 메시지가 포함 (부분 매칭)
   for (const [keyword, goodsType] of Object.entries(map)) {
-    if (messageText.includes(keyword)) {
+    const normalizedKeyword = keyword.replace(/\s+/g, '').toLowerCase();
+    if (normalized.includes(normalizedKeyword) || normalizedKeyword.includes(normalized)) {
       return goodsType;
     }
   }
 
-  // AI 퍼지 매칭
+  // 2. AI 퍼지 매칭 (오타, 별칭 등 처리)
   try {
     const serviceList = Object.keys(map).join(', ');
     const response = await anthropic.messages.create({
@@ -352,6 +354,7 @@ export async function mapServiceToGoodsType(
       temperature: 0,
       system: `사용자가 언급한 사주 서비스명을 아래 목록에서 찾으세요.
 서비스 목록: ${serviceList}
+부분 일치, 줄임말, 오타도 고려하세요.
 매칭되는 서비스명만 정확히 출력하세요. 매칭되지 않으면 "없음"이라고 출력하세요.`,
       messages: [{ role: 'user', content: messageText }],
     });
@@ -362,6 +365,12 @@ export async function mapServiceToGoodsType(
         : '';
 
     if (text === '없음') return null;
+    // AI 응답도 부분 매칭으로 찾기
+    for (const [keyword, goodsType] of Object.entries(map)) {
+      if (text.includes(keyword) || keyword.includes(text)) {
+        return goodsType;
+      }
+    }
     return map[text] || null;
   } catch (error) {
     console.error('[ReportService] mapServiceToGoodsType error:', error);
