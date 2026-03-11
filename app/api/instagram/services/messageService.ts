@@ -10,6 +10,7 @@ import {
 import {
   getActiveSession,
   handleSessionMessage,
+  tryAutoSessionFromWinnerDM,
 } from '@/app/lib/report/reportService';
 import type { InstagramMessageEvent, Conversation, AccountConfig } from '@/app/lib/types';
 
@@ -77,6 +78,21 @@ export const messageService = {
     const activeSession = await getActiveSession(conversation.id);
     if (activeSession) {
       await handleSessionMessage(activeSession, messageText, account);
+      await supabase
+        .from('saju_cs_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', conversation.id);
+      return;
+    }
+
+    // 4.5. 당첨 DM 후 사용자가 바로 생년월일을 보낸 경우 → 자동 세션 생성
+    const autoCreated = await tryAutoSessionFromWinnerDM(
+      conversation.id,
+      instagramUserId,
+      messageText,
+      account
+    );
+    if (autoCreated) {
       await supabase
         .from('saju_cs_conversations')
         .update({ updated_at: new Date().toISOString() })

@@ -378,6 +378,76 @@ export async function mapServiceToGoodsType(
   }
 }
 
+// === 당첨 DM → 자동 리포트 세션 ===
+
+/**
+ * 최근 봇 메시지에서 "당첨" 키워드 + 서비스명을 감지하여
+ * 자동으로 리포트 세션을 생성하고 사용자 정보를 추출한다.
+ * 사용자가 생년월일을 바로 보낼 때 세션 없이도 리포트를 시작할 수 있다.
+ */
+export async function tryAutoSessionFromWinnerDM(
+  conversationId: string,
+  instagramUserId: string,
+  messageText: string,
+  account: AccountConfig
+): Promise<boolean> {
+  // 최근 봇 메시지 5개 조회
+  const { data: recentMessages } = await supabase
+    .from('saju_cs_messages')
+    .select('content, role')
+    .eq('conversation_id', conversationId)
+    .eq('role', 'assistant')
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  if (!recentMessages || recentMessages.length === 0) return false;
+
+  // "당첨" 키워드가 포함된 봇 메시지 찾기
+  const winnerMsg = recentMessages.find(
+    (m) => m.content && m.content.includes('당첨')
+  );
+  if (!winnerMsg) return false;
+
+  // 당첨 메시지에서 서비스명 추출
+  const serviceMap = getServiceMap(account);
+  const goodsType = await mapServiceToGoodsType(winnerMsg.content, serviceMap);
+  if (!goodsType) return false;
+
+  // 사용자 메시지에서 개인정보 추출 시도
+  const info = await extractPersonInfo(messageText);
+  if (!info || !info.name || !info.gender || !info.birthdate) return false;
+
+  // 세션 생성 → awaiting_info 건너뛰고 바로 confirming 단계로
+  const { data: session, error } = await supabase
+    .from('saju_cs_report_sessions')
+    .insert({
+      account_id: account.id,
+      conversation_id: conversationId,
+      instagram_user_id: instagramUserId,
+      step: 'confirming',
+      goods_type: goodsType,
+      my_info: info,
+      initiated_by: 'auto_winner',
+    })
+    .select('*')
+    .single();
+
+  if (error || !session) {
+    console.error('[ReportService] Auto session creation failed:', error);
+    return false;
+  }
+
+  // 확인 메시지 전송
+  const confirmMsg = formatConfirmation(goodsType, info);
+  await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
+
+  console.log(
+    '[ReportService] Auto session created from winner DM: conversation=%s, goodsType=%s',
+    conversationId, goodsType
+  );
+  return true;
+}
+
 // === 리포트 생성 ===
 
 async function submitReport(session: ReportSession, account: AccountConfig): Promise<void> {
