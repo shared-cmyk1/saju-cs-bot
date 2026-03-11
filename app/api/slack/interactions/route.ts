@@ -203,12 +203,17 @@ async function handleModalSubmission(
         .eq('id', escalation.user_message_id)
         .single();
 
-      // 5. Slack 메시지 업데이트 (답변 완료 표시)
+      // 5. Slack 메시지 업데이트 (답변 완료 표시 + 리포트 재발급 버튼 유지)
       await updateEscalationMessage(
         escalation.slack_channel_id,
         escalation.slack_message_ts,
         respondedBy,
-        userMsg?.content || ''
+        userMsg?.content || '',
+        {
+          conversationId: metadata.conversation_id,
+          instagramUserId: metadata.instagram_user_id,
+          accountId: metadata.account_id,
+        }
       );
     }
 

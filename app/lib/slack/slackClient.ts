@@ -169,9 +169,10 @@ export async function updateEscalationMessage(
   channel: string,
   ts: string,
   respondedBy: string,
-  userQuestion: string
+  userQuestion: string,
+  metadata?: { conversationId: string; instagramUserId: string; accountId: string }
 ): Promise<void> {
-  const blocks = [
+  const blocks: Record<string, unknown>[] = [
     {
       type: 'header',
       text: { type: 'plain_text', text: 'CS 문의 에스컬레이션', emoji: true },
@@ -191,6 +192,25 @@ export async function updateEscalationMessage(
       },
     },
   ];
+
+  // 답변 완료 후에도 리포트 재발급 버튼 유지
+  if (metadata) {
+    blocks.push({
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+          action_id: 'start_report_reissue',
+          value: JSON.stringify({
+            conversation_id: metadata.conversationId,
+            instagram_user_id: metadata.instagramUserId,
+            account_id: metadata.accountId,
+          }),
+        },
+      ],
+    });
+  }
 
   await slackAPI('chat.update', {
     channel,
