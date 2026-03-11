@@ -42,8 +42,9 @@ const MESSAGES = {
 };
 
 function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
-  if (account.service_map) {
-    return account.service_map as Record<string, GoodsType>;
+  if (account.service_map && Object.keys(account.service_map).length > 0) {
+    // 계정별 맵 + 기본 맵 병합 (계정별이 우선)
+    return { ...DEFAULT_SERVICE_MAP, ...(account.service_map as Record<string, GoodsType>) };
   }
   return DEFAULT_SERVICE_MAP;
 }
