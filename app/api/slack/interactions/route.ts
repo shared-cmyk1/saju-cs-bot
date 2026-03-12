@@ -341,7 +341,12 @@ async function handleProposedResponseAction(
         pending.slack_message_ts,
         approved,
         respondedBy,
-        pending.customer_message
+        pending.customer_message,
+        {
+          conversationId: pending.conversation_id,
+          instagramUserId: pending.instagram_user_id,
+          accountId: accountId,
+        }
       );
     }
 

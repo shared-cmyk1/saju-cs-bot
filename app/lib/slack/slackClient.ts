@@ -416,13 +416,14 @@ export async function updateResponseProposal(
   ts: string,
   approved: boolean,
   respondedBy: string,
-  customerMessage: string
+  customerMessage: string,
+  metadata?: { conversationId: string; instagramUserId: string; accountId: string }
 ): Promise<void> {
   const statusText = approved
     ? `:white_check_mark: *전송 완료* by @${respondedBy}`
     : `:x: *거절됨* by @${respondedBy}`;
 
-  const blocks = [
+  const blocks: Record<string, unknown>[] = [
     {
       type: 'header',
       text: { type: 'plain_text', text: '자동 응답 제안', emoji: true },
@@ -435,6 +436,24 @@ export async function updateResponseProposal(
       },
     },
   ];
+
+  if (metadata) {
+    blocks.push({
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+          action_id: 'start_report_reissue',
+          value: JSON.stringify({
+            conversation_id: metadata.conversationId,
+            instagram_user_id: metadata.instagramUserId,
+            account_id: metadata.accountId,
+          }),
+        },
+      ],
+    });
+  }
 
   await slackAPI('chat.update', {
     channel,
