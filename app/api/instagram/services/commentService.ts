@@ -4,10 +4,8 @@ import * as graphApi from './graphApi';
 import { createPreview } from '@/app/lib/report/reportApiClient';
 import type { InstagramCommentEvent, AccountConfig } from '@/app/lib/types';
 
-let _anthropic: Anthropic | null = null;
 function getAnthropic(): Anthropic {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 }
 
 interface BirthdateExtraction {

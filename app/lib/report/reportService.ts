@@ -4,11 +4,8 @@ import * as graphApi from '@/app/api/instagram/services/graphApi';
 import { createReport, type CreateReunionReportParams } from './reportApiClient';
 import type { ReportSession, GoodsType, PersonInfo, AccountConfig } from '@/app/lib/types';
 
-// lazy init — module-level new Anthropic() can fail if env vars aren't ready at cold-start
-let _anthropic: Anthropic | null = null;
 function getAnthropic(): Anthropic {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 }
 
 // === 기본 서비스명 → goodsType 매핑 ===

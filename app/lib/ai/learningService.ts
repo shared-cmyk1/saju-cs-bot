@@ -3,10 +3,8 @@ import { supabase } from '@/app/lib/supabase/client';
 import { postAutoRuleProposal } from '@/app/lib/slack/slackClient';
 import type { AutoRule, CategoryAnalysis } from '@/app/lib/types';
 
-let _anthropic: Anthropic | null = null;
 function getAnthropic(): Anthropic {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 }
 
 const CATEGORY_THRESHOLD = 5;

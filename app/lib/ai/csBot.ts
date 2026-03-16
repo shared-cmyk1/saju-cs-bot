@@ -1,10 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { CSBotInput, CSBotOutput } from '@/app/lib/types';
 
-let _anthropic: Anthropic | null = null;
 function getAnthropic(): Anthropic {
-  if (!_anthropic) _anthropic = new Anthropic();
-  return _anthropic;
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 }
 
 function buildSystemPrompt(faqContent: string): string {
