@@ -220,19 +220,21 @@ async function handleAwaitingInfo(
   messageText: string,
   account: AccountConfig
 ): Promise<void> {
-  console.log('[ReportService] handleAwaitingInfo called with:', messageText);
+  // DB에 디버그 로그 기록
+  await supabase
+    .from('saju_cs_report_sessions')
+    .update({ shop_order_no: `DEBUG_INPUT: ${messageText.substring(0, 100)}` })
+    .eq('id', session.id);
+
   const info = await extractPersonInfo(messageText);
-  console.log('[ReportService] extractPersonInfo result:', JSON.stringify(info));
+
+  // 추출 결과를 DB에 기록
+  await supabase
+    .from('saju_cs_report_sessions')
+    .update({ shop_order_no: `DEBUG_RESULT: ${JSON.stringify(info)}` })
+    .eq('id', session.id);
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
-    console.error('[ReportService] Extraction validation failed:', {
-      hasInfo: !!info,
-      name: info?.name,
-      gender: info?.gender,
-      birthdate: info?.birthdate,
-      sessionId: session.id,
-      input: messageText,
-    });
     await graphApi.sendMessage(
       session.instagram_user_id,
       MESSAGES.extractionFailed,
