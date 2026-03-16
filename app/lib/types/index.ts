@@ -171,6 +171,7 @@ export type ReportSessionStep =
   | 'awaiting_info'
   | 'awaiting_partner_info'
   | 'confirming'
+  | 'awaiting_payment'
   | 'generating'
   | 'completed'
   | 'failed'

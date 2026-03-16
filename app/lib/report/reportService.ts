@@ -39,6 +39,10 @@ const MESSAGES = {
     '입력하신 정보를 정확히 이해하지 못했어요.\n이름, 성별, 생년월일, 태어난 시간을 다시 알려주시겠어요?\n\n예) 김철수 남자 95년 3월 2일 오후 2시',
   serviceNotFound:
     '해당 서비스를 찾지 못했어요.\n아래 서비스 중 하나를 선택해주세요:\n\n• 운해선생\n• 윤화보살 / 연애사주\n• 속박경 / 29금사주\n• 청연보살 / 재회사주 / 재연도',
+  askPayment:
+    '결제 확인이 필요해요! 💳\n\n결제 내역 캡처 화면을 보내주시거나, 결제 시점과 수단을 알려주세요.\n\n예) 3월 15일 카카오페이로 결제했어요',
+  paymentConfirmed:
+    '결제 확인 완료! 리포트 생성을 시작할게요 😊',
 };
 
 function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
@@ -56,7 +60,7 @@ function getReportApiConfig(account: AccountConfig): { url: string; key: string 
   return { url, key };
 }
 
-function formatConfirmation(
+export function formatConfirmation(
   goodsType: GoodsType,
   myInfo: PersonInfo,
   partnerInfo?: PersonInfo
@@ -97,6 +101,7 @@ export async function getActiveSession(
       'awaiting_info',
       'awaiting_partner_info',
       'confirming',
+      'awaiting_payment',
       'generating',
     ])
     .gt('expires_at', new Date().toISOString())
@@ -168,6 +173,9 @@ export async function handleSessionMessage(
       break;
     case 'confirming':
       await handleConfirming(session, messageText, account);
+      break;
+    case 'awaiting_payment':
+      await handleAwaitingPayment(session, messageText, account);
       break;
     case 'generating':
       // 생성 중에는 대기 안내
@@ -271,9 +279,9 @@ async function handleConfirming(
 ): Promise<void> {
   const normalized = messageText.trim();
 
-  // "네" → 리포트 생성
+  // "네" → 결제 확인 후 리포트 생성
   if (/^(네|넵|넹|예|응|맞아|맞습니다|ㅇ|ㅇㅇ|ok|yes)$/i.test(normalized)) {
-    await submitReport(session, account);
+    await checkPaymentAndSubmit(session, account);
     return;
   }
 
@@ -466,6 +474,69 @@ export async function tryAutoSessionFromWinnerDM(
     conversationId, goodsType
   );
   return true;
+}
+
+// === 결제 확인 ===
+
+const PAYMENT_KEYWORDS = ['결제', '입금', '송금', '카드', '카카오페이', '네이버페이', '토스', '계좌이체', '무통장', '페이', 'pay'];
+
+function hasPaymentEvidence(content: string): boolean {
+  if (content.startsWith('[image]')) return true;
+  const lower = content.toLowerCase();
+  return PAYMENT_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+async function checkPaymentAndSubmit(
+  session: ReportSession,
+  account: AccountConfig
+): Promise<void> {
+  const { data: recentMessages } = await supabase
+    .from('saju_cs_messages')
+    .select('content, role')
+    .eq('conversation_id', session.conversation_id)
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  if (recentMessages) {
+    const found = recentMessages.some(
+      (m) => m.content && hasPaymentEvidence(m.content)
+    );
+    if (found) {
+      await submitReport(session, account);
+      return;
+    }
+  }
+
+  // 결제 증거 없음 → 결제 확인 요청
+  await graphApi.sendMessage(
+    session.instagram_user_id,
+    MESSAGES.askPayment,
+    account.instagram_access_token
+  );
+  await updateSession(session.id, { step: 'awaiting_payment' });
+}
+
+async function handleAwaitingPayment(
+  session: ReportSession,
+  messageText: string,
+  account: AccountConfig
+): Promise<void> {
+  if (hasPaymentEvidence(messageText)) {
+    await graphApi.sendMessage(
+      session.instagram_user_id,
+      MESSAGES.paymentConfirmed,
+      account.instagram_access_token
+    );
+    await submitReport(session, account);
+    return;
+  }
+
+  // 결제 증거 아님 → 다시 안내
+  await graphApi.sendMessage(
+    session.instagram_user_id,
+    '결제 내역 캡처를 보내주시거나, 결제 방법을 알려주세요!',
+    account.instagram_access_token
+  );
 }
 
 // === 리포트 생성 ===

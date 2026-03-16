@@ -11,6 +11,11 @@ import {
   getActiveSession,
   handleSessionMessage,
   tryAutoSessionFromWinnerDM,
+  createSession,
+  mapServiceToGoodsType,
+  extractPersonInfo,
+  formatConfirmation,
+  MESSAGES,
 } from '@/app/lib/report/reportService';
 import type { InstagramMessageEvent, Conversation, AccountConfig } from '@/app/lib/types';
 
@@ -43,9 +48,14 @@ export const messageService = {
     const instagramUserId = event.sender.id;
     const messageText = event.message?.text;
     const messageMid = event.message?.mid;
+    const attachments = event.message?.attachments;
+    const hasImage = attachments?.some((a) => a.type === 'image');
 
-    // 1. 비텍스트 메시지 → 무시
-    if (!messageText) return;
+    // 1. 비텍스트 + 비이미지 메시지 → 무시
+    if (!messageText && !hasImage) return;
+
+    // 텍스트 또는 이미지 마커를 DB 저장용으로 사용
+    const contentToSave = messageText || (hasImage ? `[image] ${attachments![0].payload.url}` : '');
 
     // 2. 중복 메시지 체크 (Instagram 웹훅 재전송 방지)
     if (messageMid) {
@@ -69,7 +79,7 @@ export const messageService = {
       conversation_id: conversation.id,
       message_index: nextIndex,
       role: 'user',
-      content: messageText,
+      content: contentToSave,
       source: 'user',
       instagram_mid: messageMid,
     });
@@ -77,7 +87,81 @@ export const messageService = {
     // 4. 활성 리포트 세션 체크 → 세션이 있으면 세션 핸들러로 처리
     const activeSession = await getActiveSession(conversation.id);
     if (activeSession) {
-      await handleSessionMessage(activeSession, messageText, account);
+      await handleSessionMessage(activeSession, contentToSave, account);
+      await supabase
+        .from('saju_cs_conversations')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', conversation.id);
+      return;
+    }
+
+    // 이미지만 있고 텍스트 없는 경우, 세션 외에서는 더 이상 처리하지 않음
+    if (!messageText) return;
+
+    // 4.3. "리포트 재발급" 키워드 감지 → 대화 히스토리에서 컨텍스트 추론
+    if (/리포트\s*재발급|보고서\s*재발급|리포트\s*다시/.test(messageText)) {
+      // 최근 대화 히스토리 조회
+      const { data: recentMsgs } = await supabase
+        .from('saju_cs_messages')
+        .select('content, role')
+        .eq('conversation_id', conversation.id)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      const historyTexts = (recentMsgs || []).map((m) => m.content).join(' ');
+
+      // 서비스 타입 추론
+      const inferredGoodsType = await mapServiceToGoodsType(historyTexts);
+      // 개인정보 추론
+      const inferredInfo = await extractPersonInfo(historyTexts);
+
+      const hasService = !!inferredGoodsType;
+      const hasInfo = !!(inferredInfo && inferredInfo.name && inferredInfo.gender && inferredInfo.birthdate);
+
+      if (hasService && hasInfo) {
+        // 서비스 + 정보 모두 추론됨 → confirming 단계로 바로 진행
+        const { data: newSession, error } = await supabase
+          .from('saju_cs_report_sessions')
+          .insert({
+            account_id: account.id,
+            conversation_id: conversation.id,
+            instagram_user_id: instagramUserId,
+            step: 'confirming',
+            goods_type: inferredGoodsType,
+            my_info: inferredInfo,
+            initiated_by: 'dm_reissue',
+          })
+          .select('*')
+          .single();
+
+        if (!error && newSession) {
+          const confirmMsg = formatConfirmation(inferredGoodsType!, inferredInfo!);
+          await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
+        }
+      } else if (hasService) {
+        // 서비스만 추론됨 → awaiting_info 단계
+        await supabase
+          .from('saju_cs_report_sessions')
+          .insert({
+            account_id: account.id,
+            conversation_id: conversation.id,
+            instagram_user_id: instagramUserId,
+            step: 'awaiting_info',
+            goods_type: inferredGoodsType,
+            initiated_by: 'dm_reissue',
+          });
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
+      } else {
+        // 아무것도 추론 안됨 → awaiting_service 단계
+        await createSession({
+          accountId: account.id,
+          conversationId: conversation.id,
+          instagramUserId,
+          initiatedBy: 'dm_reissue',
+        });
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+      }
+
       await supabase
         .from('saju_cs_conversations')
         .update({ updated_at: new Date().toISOString() })
