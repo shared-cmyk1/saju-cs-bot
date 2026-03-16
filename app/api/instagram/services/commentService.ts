@@ -14,16 +14,19 @@ interface BirthdateExtraction {
   extractionError?: string; // AI 호출 실패 시 에러 메시지
 }
 
-// 댓글에서 생년월일 추출
+// 댓글에서 생년월일 추출 (최대 2회 재시도)
 async function extractBirthdateFromComment(
   commentText: string
 ): Promise<BirthdateExtraction> {
-  try {
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
-      temperature: 0,
-      system: `Instagram 댓글에서 생년월일 정보를 추출하세요.
+  const MAX_RETRIES = 2;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        temperature: 0,
+        system: `Instagram 댓글에서 생년월일 정보를 추출하세요.
 사주/운세 관련 게시물의 댓글이므로, 사람들이 자기 생년월일을 적는 경우가 많습니다.
 
 다양한 형식을 인식하세요:
@@ -41,18 +44,26 @@ async function extractBirthdateFromComment(
 
 생년월일이 없는 일반 댓글이면 hasBirthdate: false로 응답하세요.
 JSON만 출력하세요.`,
-      messages: [{ role: 'user', content: commentText }],
-    });
+        messages: [{ role: 'user', content: commentText }],
+      });
 
-    const text =
-      response.content[0].type === 'text' ? response.content[0].text : '';
-    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    return JSON.parse(jsonStr) as BirthdateExtraction;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    console.error('[CommentService] extractBirthdate error:', errorMsg);
-    return { hasBirthdate: false, extractionError: errorMsg };
+      const text =
+        response.content[0].type === 'text' ? response.content[0].text : '';
+      const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      return JSON.parse(jsonStr) as BirthdateExtraction;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[CommentService] extractBirthdate attempt ${attempt + 1} failed, retrying:`, errorMsg);
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      console.error('[CommentService] extractBirthdate failed after retries:', errorMsg);
+      return { hasBirthdate: false, extractionError: errorMsg };
+    }
   }
+
+  return { hasBirthdate: false, extractionError: 'Unexpected retry loop exit' };
 }
 
 // 댓글 처리 메인 로직

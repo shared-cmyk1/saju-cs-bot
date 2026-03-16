@@ -68,8 +68,8 @@ export async function sendPrivateReply(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[GraphAPI] sendPrivateReply failed:', errorText);
-    throw new Error(`Failed to send private reply: ${response.status}`);
+    console.error('[GraphAPI] sendPrivateReply failed:', response.status, errorText);
+    throw new Error(`Failed to send private reply: ${response.status} - ${errorText.substring(0, 200)}`);
   }
 }
 
