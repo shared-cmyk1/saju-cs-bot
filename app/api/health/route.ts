@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
         max_tokens: 100,
         temperature: 0,
         system: 'JSON만 출력: {"name":"이름","gender":"성별","birthdate":"YYYYMMDD","birthTime":"HH:mm"}',
-        messages: [{ role: 'user', content: '양연주 여자 02년 8월 6일 오전 11시 3분' }],
+        messages: [{ role: 'user', content: request.nextUrl.searchParams.get('input') || '양연주 여자 02년 8월 6일 오전 11시 3분' }],
       });
       const elapsed = Date.now() - start;
       const text = response.content[0].type === 'text' ? response.content[0].text : '';
