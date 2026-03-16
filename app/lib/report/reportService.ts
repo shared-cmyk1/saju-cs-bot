@@ -220,10 +220,11 @@ async function handleAwaitingInfo(
   messageText: string,
   account: AccountConfig
 ): Promise<void> {
-  // DB에 디버그 로그 기록
+  // DB에 디버그 로그 기록 (API키 앞 10자 + 메시지)
+  const keyPrefix = process.env.ANTHROPIC_API_KEY?.substring(0, 15) || 'NO_KEY';
   await supabase
     .from('saju_cs_report_sessions')
-    .update({ shop_order_no: `DEBUG_INPUT: ${messageText.substring(0, 100)}` })
+    .update({ shop_order_no: `KEY:${keyPrefix} | INPUT:${messageText.substring(0, 80)}` })
     .eq('id', session.id);
 
   const info = await extractPersonInfo(messageText);
