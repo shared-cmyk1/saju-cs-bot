@@ -22,8 +22,10 @@ const DEFAULT_SERVICE_MAP: Record<string, GoodsType> = {
 // === 메시지 템플릿 ===
 
 const MESSAGES = {
+  askPaymentFirst:
+    '리포트 재발급을 도와드릴게요!\n\n먼저 결제 내역을 확인해야 해요 💳\n결제 내역 캡처 화면을 보내주시거나, 결제 시점과 수단을 알려주세요.\n\n예) 3월 15일 카카오페이로 결제했어요',
   askService:
-    '리포트 재발급을 도와드릴게요!\n\n어떤 서비스를 이용하셨나요?\n(예: 윤화보살, 운해선생, 속박경, 청연보살 등)',
+    '결제 확인 완료! ✅\n\n어떤 서비스를 이용하셨나요?\n(예: 윤화보살, 운해선생, 속박경, 청연보살 등)',
   askInfo:
     '본인의 이름, 성별, 생년월일, 태어난 시간을 알려주세요.\n\n예) 김철수 남자 95년 3월 2일 오후 2시\n\n* 태어난 시간을 모르시면 "모름"이라고 적어주세요.',
   askPartnerInfo:
@@ -124,7 +126,7 @@ export async function createSession(params: {
       account_id: params.accountId,
       conversation_id: params.conversationId,
       instagram_user_id: params.instagramUserId,
-      step: 'awaiting_service',
+      step: 'awaiting_payment',
       initiated_by: params.initiatedBy,
     })
     .select('*')
@@ -213,9 +215,19 @@ async function handleAwaitingInfo(
   messageText: string,
   account: AccountConfig
 ): Promise<void> {
+  console.log('[ReportService] handleAwaitingInfo called with:', messageText);
   const info = await extractPersonInfo(messageText);
+  console.log('[ReportService] extractPersonInfo result:', JSON.stringify(info));
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
+    console.error('[ReportService] Extraction validation failed:', {
+      hasInfo: !!info,
+      name: info?.name,
+      gender: info?.gender,
+      birthdate: info?.birthdate,
+      sessionId: session.id,
+      input: messageText,
+    });
     await graphApi.sendMessage(
       session.instagram_user_id,
       MESSAGES.extractionFailed,
@@ -279,9 +291,9 @@ async function handleConfirming(
 ): Promise<void> {
   const normalized = messageText.trim();
 
-  // "네" → 결제 확인 후 리포트 생성
+  // "네" → 리포트 생성 (결제는 이미 앞 단계에서 확인됨)
   if (/^(네|넵|넹|예|응|맞아|맞습니다|ㅇ|ㅇㅇ|ok|yes)$/i.test(normalized)) {
-    await checkPaymentAndSubmit(session, account);
+    await submitReport(session, account);
     return;
   }
 
@@ -522,12 +534,13 @@ async function handleAwaitingPayment(
   account: AccountConfig
 ): Promise<void> {
   if (hasPaymentEvidence(messageText)) {
+    // 결제 확인 완료 → 서비스 확인 단계로
+    await updateSession(session.id, { step: 'awaiting_service' });
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.paymentConfirmed,
+      MESSAGES.askService,
       account.instagram_access_token
     );
-    await submitReport(session, account);
     return;
   }
 

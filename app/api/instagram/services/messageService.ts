@@ -98,68 +98,64 @@ export const messageService = {
     // 이미지만 있고 텍스트 없는 경우, 세션 외에서는 더 이상 처리하지 않음
     if (!messageText) return;
 
-    // 4.3. "리포트 재발급" 키워드 감지 → 대화 히스토리에서 컨텍스트 추론
+    // 4.3. "리포트 재발급" 키워드 감지 → 결제 확인부터 시작
     if (/리포트\s*재발급|보고서\s*재발급|리포트\s*다시/.test(messageText)) {
-      // 최근 대화 히스토리 조회
+      // 최근 대화에서 결제 증거 확인
       const { data: recentMsgs } = await supabase
         .from('saju_cs_messages')
         .select('content, role')
         .eq('conversation_id', conversation.id)
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(30);
 
-      const historyTexts = (recentMsgs || []).map((m) => m.content).join(' ');
+      const hasPayment = (recentMsgs || []).some(
+        (m) => m.content && (
+          m.content.startsWith('[image]') ||
+          ['결제', '입금', '송금', '카드', '카카오페이', '네이버페이', '토스', '계좌이체', '무통장', '페이', 'pay']
+            .some((kw) => m.content.toLowerCase().includes(kw))
+        )
+      );
 
-      // 서비스 타입 추론
-      const inferredGoodsType = await mapServiceToGoodsType(historyTexts);
-      // 개인정보 추론
-      const inferredInfo = await extractPersonInfo(historyTexts);
+      if (hasPayment) {
+        // 결제 확인됨 → 서비스 확인부터
+        const historyTexts = (recentMsgs || []).map((m) => m.content).join(' ');
+        const inferredGoodsType = await mapServiceToGoodsType(historyTexts);
 
-      const hasService = !!inferredGoodsType;
-      const hasInfo = !!(inferredInfo && inferredInfo.name && inferredInfo.gender && inferredInfo.birthdate);
-
-      if (hasService && hasInfo) {
-        // 서비스 + 정보 모두 추론됨 → confirming 단계로 바로 진행
-        const { data: newSession, error } = await supabase
-          .from('saju_cs_report_sessions')
-          .insert({
-            account_id: account.id,
-            conversation_id: conversation.id,
-            instagram_user_id: instagramUserId,
-            step: 'confirming',
-            goods_type: inferredGoodsType,
-            my_info: inferredInfo,
-            initiated_by: 'dm_reissue',
-          })
-          .select('*')
-          .single();
-
-        if (!error && newSession) {
-          const confirmMsg = formatConfirmation(inferredGoodsType!, inferredInfo!);
-          await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
+        if (inferredGoodsType) {
+          // 서비스도 추론됨 → 개인정보 단계
+          await supabase
+            .from('saju_cs_report_sessions')
+            .insert({
+              account_id: account.id,
+              conversation_id: conversation.id,
+              instagram_user_id: instagramUserId,
+              step: 'awaiting_info',
+              goods_type: inferredGoodsType,
+              initiated_by: 'dm_reissue',
+            });
+          await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
+        } else {
+          // 서비스 추론 못함 → 서비스 확인 단계
+          await supabase
+            .from('saju_cs_report_sessions')
+            .insert({
+              account_id: account.id,
+              conversation_id: conversation.id,
+              instagram_user_id: instagramUserId,
+              step: 'awaiting_service',
+              initiated_by: 'dm_reissue',
+            });
+          await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
         }
-      } else if (hasService) {
-        // 서비스만 추론됨 → awaiting_info 단계
-        await supabase
-          .from('saju_cs_report_sessions')
-          .insert({
-            account_id: account.id,
-            conversation_id: conversation.id,
-            instagram_user_id: instagramUserId,
-            step: 'awaiting_info',
-            goods_type: inferredGoodsType,
-            initiated_by: 'dm_reissue',
-          });
-        await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
       } else {
-        // 아무것도 추론 안됨 → awaiting_service 단계
+        // 결제 확인 안됨 → 결제 확인부터 시작
         await createSession({
           accountId: account.id,
           conversationId: conversation.id,
           instagramUserId,
           initiatedBy: 'dm_reissue',
         });
-        await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askPaymentFirst, account.instagram_access_token);
       }
 
       await supabase
