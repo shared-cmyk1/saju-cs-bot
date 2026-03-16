@@ -4,7 +4,12 @@ import * as graphApi from '@/app/api/instagram/services/graphApi';
 import { createReport, type CreateReunionReportParams } from './reportApiClient';
 import type { ReportSession, GoodsType, PersonInfo, AccountConfig } from '@/app/lib/types';
 
-const anthropic = new Anthropic();
+// lazy init — module-level new Anthropic() can fail if env vars aren't ready at cold-start
+let _anthropic: Anthropic | null = null;
+function getAnthropic(): Anthropic {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
 
 // === 기본 서비스명 → goodsType 매핑 ===
 
@@ -325,7 +330,7 @@ export async function extractPersonInfo(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await anthropic.messages.create({
+      const response = await getAnthropic().messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 200,
         temperature: 0,
@@ -381,7 +386,7 @@ export async function mapServiceToGoodsType(
   for (let attempt = 0; attempt <= 1; attempt++) {
     try {
       const serviceList = Object.keys(map).join(', ');
-      const response = await anthropic.messages.create({
+      const response = await getAnthropic().messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 50,
         temperature: 0,

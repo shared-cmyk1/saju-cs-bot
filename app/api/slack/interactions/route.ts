@@ -356,7 +356,7 @@ async function handleProposedResponseAction(
   }
 }
 
-// 리포트 재발급 시작 (Slack 버튼) — 팀이 결제 확인 후 누르므로 결제 단계 건너뜀
+// 리포트 재발급 시작 (Slack 버튼) — 결제 확인부터 시작
 async function handleStartReportReissue(
   accountId: string,
   conversationId: string,
@@ -370,58 +370,24 @@ async function handleStartReportReissue(
       return;
     }
 
-    // 대화 이력 조회 (최근 20개)
-    const { data: messages } = await supabase
-      .from('saju_cs_messages')
-      .select('role, content')
-      .eq('conversation_id', conversationId)
-      .order('message_index', { ascending: true })
-      .limit(20);
+    // 세션 생성 (awaiting_payment부터 시작)
+    await createSession({
+      accountId: account.id,
+      conversationId,
+      instagramUserId,
+      initiatedBy,
+    });
 
-    const conversationHistory = (messages || [])
-      .filter((m) => m.role === 'user')
-      .map((m) => m.content)
-      .join('\n');
-
-    // 대화 이력에서 서비스 유추
-    let inferredGoodsType: string | null = null;
-
-    if (conversationHistory.length > 0) {
-      const { mapServiceToGoodsType } = await import('@/app/lib/report/reportService');
-      inferredGoodsType = await mapServiceToGoodsType(conversationHistory);
-    }
-
-    // 세션 생성 (결제 확인됨 → awaiting_service부터)
-    const { data: session, error } = await supabase
-      .from('saju_cs_report_sessions')
-      .insert({
-        account_id: account.id,
-        conversation_id: conversationId,
-        instagram_user_id: instagramUserId,
-        step: inferredGoodsType ? 'awaiting_info' : 'awaiting_service',
-        goods_type: inferredGoodsType || null,
-        initiated_by: initiatedBy,
-      })
-      .select('*')
-      .single();
-
-    if (error || !session) {
-      console.error('[SlackInteraction] Session creation failed:', error);
-      return;
-    }
-
-    if (inferredGoodsType) {
-      // 서비스 유추됨 → 개인정보 질문
-      await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
-    } else {
-      // 서비스 모름 → 서비스 질문
-      await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
-    }
+    // 고객에게 결제 확인 요청
+    await graphApi.sendMessage(
+      instagramUserId,
+      MESSAGES.askPaymentFirst,
+      account.instagram_access_token
+    );
 
     console.log('[SlackInteraction] Report reissue started:', {
       conversationId,
       initiatedBy,
-      inferredGoodsType,
     });
   } catch (error) {
     console.error('[SlackInteraction] Report reissue error:', error);

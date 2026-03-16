@@ -3,7 +3,11 @@ import { supabase } from '@/app/lib/supabase/client';
 import { postAutoRuleProposal } from '@/app/lib/slack/slackClient';
 import type { AutoRule, CategoryAnalysis } from '@/app/lib/types';
 
-const anthropic = new Anthropic();
+let _anthropic: Anthropic | null = null;
+function getAnthropic(): Anthropic {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
 
 const CATEGORY_THRESHOLD = 5;
 const MATCH_CONFIDENCE_THRESHOLD = 0.85;
@@ -68,7 +72,7 @@ async function categorizePair(
   agentResponse: string
 ): Promise<string | null> {
   try {
-    const response = await anthropic.messages.create({
+    const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 100,
       temperature: 0,
@@ -145,7 +149,7 @@ async function generateCategoryTemplate(
       .map((p, i) => `${i + 1}. 질문: ${p.customer_message}\n   답변: ${p.agent_response}`)
       .join('\n\n');
 
-    const response = await anthropic.messages.create({
+    const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 500,
       temperature: 0.3,
@@ -198,7 +202,7 @@ export async function matchRule(
       )
       .join('\n---\n');
 
-    const response = await anthropic.messages.create({
+    const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 100,
       temperature: 0,
@@ -239,7 +243,7 @@ export async function generateAutoResponse(
   customerMessage: string
 ): Promise<string> {
   try {
-    const response = await anthropic.messages.create({
+    const response = await getAnthropic().messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       temperature: 0.3,

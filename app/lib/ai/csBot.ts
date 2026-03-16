@@ -1,7 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { CSBotInput, CSBotOutput } from '@/app/lib/types';
 
-const anthropic = new Anthropic();
+let _anthropic: Anthropic | null = null;
+function getAnthropic(): Anthropic {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
 
 function buildSystemPrompt(faqContent: string): string {
   return `당신은 AI 사주 서비스의 고객 상담 봇입니다.
@@ -76,7 +80,7 @@ export async function generateResponse(input: CSBotInput): Promise<CSBotOutput> 
   }
 
   try {
-    const response = await anthropic.messages.create({
+    const response = await getAnthropic().messages.create({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1024,
       temperature: 0.3,

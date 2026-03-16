@@ -4,7 +4,11 @@ import * as graphApi from './graphApi';
 import { createPreview } from '@/app/lib/report/reportApiClient';
 import type { InstagramCommentEvent, AccountConfig } from '@/app/lib/types';
 
-const anthropic = new Anthropic();
+let _anthropic: Anthropic | null = null;
+function getAnthropic(): Anthropic {
+  if (!_anthropic) _anthropic = new Anthropic();
+  return _anthropic;
+}
 
 interface BirthdateExtraction {
   hasBirthdate: boolean;
@@ -22,7 +26,7 @@ async function extractBirthdateFromComment(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await anthropic.messages.create({
+      const response = await getAnthropic().messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 200,
         temperature: 0,
