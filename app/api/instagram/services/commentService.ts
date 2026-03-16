@@ -11,6 +11,7 @@ interface BirthdateExtraction {
   birthdate?: string; // YYYYMMDD
   birthTime?: string; // HH:mm or '모름'
   gender?: string;    // 남 or 여
+  extractionError?: string; // AI 호출 실패 시 에러 메시지
 }
 
 // 댓글에서 생년월일 추출
@@ -48,8 +49,9 @@ JSON만 출력하세요.`,
     const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
     return JSON.parse(jsonStr) as BirthdateExtraction;
   } catch (error) {
-    console.error('[CommentService] extractBirthdate error:', error);
-    return { hasBirthdate: false };
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error('[CommentService] extractBirthdate error:', errorMsg);
+    return { hasBirthdate: false, extractionError: errorMsg };
   }
 }
 
@@ -87,7 +89,7 @@ export async function handleComment(
   const extraction = await extractBirthdateFromComment(commentText);
 
   if (!extraction.hasBirthdate || !extraction.birthdate) {
-    // 생년월일 없는 댓글 → 기록만 하고 종료
+    // 생년월일 없는 댓글 또는 추출 실패 → 기록하고 종료
     await supabase.from('saju_cs_comment_reports').insert({
       account_id: account.id,
       comment_id: commentId,
@@ -96,8 +98,13 @@ export async function handleComment(
       instagram_username: username || null,
       comment_text: commentText,
       preview_sent: false,
+      error: extraction.extractionError || null,
     });
-    console.log('[CommentService] No birthdate found in comment:', commentId);
+    if (extraction.extractionError) {
+      console.error('[CommentService] Extraction failed for comment:', commentId, extraction.extractionError);
+    } else {
+      console.log('[CommentService] No birthdate found in comment:', commentId);
+    }
     return;
   }
 

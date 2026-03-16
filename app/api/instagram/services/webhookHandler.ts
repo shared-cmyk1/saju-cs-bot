@@ -109,12 +109,17 @@ export const webhookHandler = {
         })
         .eq('id', escalation.id);
 
-      // Slack 메시지 업데이트
+      // Slack 메시지 업데이트 (리포트 재발급 버튼 포함)
       await updateEscalationMessage(
         escalation.slack_channel_id,
         escalation.slack_message_ts,
         'Instagram DM',
-        userMsg?.content || '(질문 없음)'
+        userMsg?.content || '(질문 없음)',
+        {
+          conversationId: escalation.conversation_id,
+          instagramUserId: recipientId,
+          accountId: account.id,
+        }
       );
 
       console.log('[WebhookHandler] Business reply resolved escalation:', escalation.id);
