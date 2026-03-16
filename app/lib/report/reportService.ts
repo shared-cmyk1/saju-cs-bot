@@ -301,12 +301,15 @@ async function handleConfirming(
 export async function extractPersonInfo(
   messageText: string
 ): Promise<PersonInfo | null> {
-  try {
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
-      temperature: 0,
-      system: `사용자 메시지에서 사주 리포트에 필요한 인적 정보를 추출하세요.
+  const MAX_RETRIES = 2;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 200,
+        temperature: 0,
+        system: `사용자 메시지에서 사주 리포트에 필요한 인적 정보를 추출하세요.
 반드시 아래 JSON 형식으로만 응답하세요.
 {
   "name": "이름",
@@ -317,18 +320,26 @@ export async function extractPersonInfo(
 - 연도가 2자리면 적절히 4자리로 변환 (예: 95 → 1995, 05 → 2005)
 - 정보가 부족하면 해당 필드를 null로 설정
 - JSON만 출력하세요.`,
-      messages: [{ role: 'user', content: messageText }],
-    });
+        messages: [{ role: 'user', content: messageText }],
+      });
 
-    const text =
-      response.content[0].type === 'text' ? response.content[0].text : '';
-    const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-    const parsed = JSON.parse(jsonStr);
-    return parsed as PersonInfo;
-  } catch (error) {
-    console.error('[ReportService] extractPersonInfo error:', error);
-    return null;
+      const text =
+        response.content[0].type === 'text' ? response.content[0].text : '';
+      const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+      const parsed = JSON.parse(jsonStr);
+      return parsed as PersonInfo;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (attempt < MAX_RETRIES) {
+        console.warn(`[ReportService] extractPersonInfo attempt ${attempt + 1} failed, retrying:`, errorMsg);
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+        continue;
+      }
+      console.error('[ReportService] extractPersonInfo failed after retries:', errorMsg);
+      return null;
+    }
   }
+  return null;
 }
 
 export async function mapServiceToGoodsType(
@@ -346,37 +357,45 @@ export async function mapServiceToGoodsType(
     }
   }
 
-  // 2. AI 퍼지 매칭 (오타, 별칭 등 처리)
-  try {
-    const serviceList = Object.keys(map).join(', ');
-    const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 50,
-      temperature: 0,
-      system: `사용자가 언급한 사주 서비스명을 아래 목록에서 찾으세요.
+  // 2. AI 퍼지 매칭 (오타, 별칭 등 처리, 재시도 포함)
+  for (let attempt = 0; attempt <= 1; attempt++) {
+    try {
+      const serviceList = Object.keys(map).join(', ');
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 50,
+        temperature: 0,
+        system: `사용자가 언급한 사주 서비스명을 아래 목록에서 찾으세요.
 서비스 목록: ${serviceList}
 부분 일치, 줄임말, 오타도 고려하세요.
 매칭되는 서비스명만 정확히 출력하세요. 매칭되지 않으면 "없음"이라고 출력하세요.`,
-      messages: [{ role: 'user', content: messageText }],
-    });
+        messages: [{ role: 'user', content: messageText }],
+      });
 
-    const text =
-      response.content[0].type === 'text'
-        ? response.content[0].text.trim()
-        : '';
+      const text =
+        response.content[0].type === 'text'
+          ? response.content[0].text.trim()
+          : '';
 
-    if (text === '없음') return null;
-    // AI 응답도 부분 매칭으로 찾기
-    for (const [keyword, goodsType] of Object.entries(map)) {
-      if (text.includes(keyword) || keyword.includes(text)) {
-        return goodsType;
+      if (text === '없음') return null;
+      // AI 응답도 부분 매칭으로 찾기
+      for (const [keyword, goodsType] of Object.entries(map)) {
+        if (text.includes(keyword) || keyword.includes(text)) {
+          return goodsType;
+        }
       }
+      return map[text] || null;
+    } catch (error) {
+      if (attempt === 0) {
+        console.warn('[ReportService] mapServiceToGoodsType retrying:', error);
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      console.error('[ReportService] mapServiceToGoodsType failed:', error);
+      return null;
     }
-    return map[text] || null;
-  } catch (error) {
-    console.error('[ReportService] mapServiceToGoodsType error:', error);
-    return null;
   }
+  return null;
 }
 
 // === 당첨 DM → 자동 리포트 세션 ===
