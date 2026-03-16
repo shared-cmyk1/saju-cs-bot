@@ -231,7 +231,7 @@ async function handleAwaitingInfo(
   // 추출 결과를 DB에 기록
   await supabase
     .from('saju_cs_report_sessions')
-    .update({ shop_order_no: `DEBUG_RESULT: ${JSON.stringify(info)}` })
+    .update({ shop_order_no: `RESULT: ${JSON.stringify(info)} | ERR: ${(info as unknown as {_error?: string})?._error || 'none'}` })
     .eq('id', session.id);
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
@@ -363,7 +363,7 @@ export async function extractPersonInfo(
         continue;
       }
       console.error('[ReportService] extractPersonInfo failed after retries:', errorMsg);
-      return null;
+      return { _error: errorMsg } as unknown as PersonInfo;
     }
   }
   return null;
