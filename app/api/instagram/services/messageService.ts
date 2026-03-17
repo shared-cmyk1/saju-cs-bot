@@ -110,7 +110,7 @@ export const messageService = {
         .limit(30);
 
       const hasPayment = (recentMsgs || []).some(
-        (m) => m.content && (
+        (m) => m.role === 'user' && m.content && (
           m.content.startsWith('[image]') ||
           ['결제', '입금', '송금', '카드', '카카오페이', '네이버페이', '토스', '계좌이체', '무통장', '페이', 'pay']
             .some((kw) => m.content.toLowerCase().includes(kw))
