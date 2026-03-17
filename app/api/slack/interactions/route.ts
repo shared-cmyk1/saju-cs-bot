@@ -387,25 +387,46 @@ async function handleStartReportReissue(
     );
 
     if (hasPayment) {
-      // 결제 증거 있음 → 서비스 확인 또는 개인정보 단계로
+      // 결제 증거 있음 → 서비스/개인정보 유추
       const userTexts = (recentMsgs || []).filter((m) => m.role === 'user').map((m) => m.content).join(' ');
-      const { mapServiceToGoodsType } = await import('@/app/lib/report/reportService');
-      const inferredGoodsType = await mapServiceToGoodsType(userTexts);
+      const { mapServiceToGoodsType, extractPersonInfo, formatConfirmation } = await import('@/app/lib/report/reportService');
 
-      const { data: session } = await supabase
+      const [inferredGoodsType, inferredInfo] = await Promise.all([
+        mapServiceToGoodsType(userTexts),
+        extractPersonInfo(userTexts),
+      ]);
+
+      const hasInfo = !!(inferredInfo && inferredInfo.name && inferredInfo.gender && inferredInfo.birthdate);
+
+      // 알아낸 만큼 스킵
+      let step: string;
+      let goodsType = inferredGoodsType || null;
+      let myInfo = hasInfo ? inferredInfo : {};
+
+      if (inferredGoodsType && hasInfo) {
+        step = 'confirming';
+      } else if (inferredGoodsType) {
+        step = 'awaiting_info';
+      } else {
+        step = 'awaiting_service';
+      }
+
+      await supabase
         .from('saju_cs_report_sessions')
         .insert({
           account_id: account.id,
           conversation_id: conversationId,
           instagram_user_id: instagramUserId,
-          step: inferredGoodsType ? 'awaiting_info' : 'awaiting_service',
-          goods_type: inferredGoodsType || null,
+          step,
+          goods_type: goodsType,
+          my_info: myInfo,
           initiated_by: initiatedBy,
-        })
-        .select('*')
-        .single();
+        });
 
-      if (inferredGoodsType) {
+      if (step === 'confirming') {
+        const confirmMsg = formatConfirmation(inferredGoodsType!, inferredInfo!);
+        await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
+      } else if (step === 'awaiting_info') {
         await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
       } else {
         await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);

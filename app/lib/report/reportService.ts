@@ -327,14 +327,73 @@ async function handleConfirming(
   );
 }
 
-// === AI 추출 ===
+// === AI 추출 (+ 정규식 폴백) ===
+
+function tryParseJson(text: string): PersonInfo | null {
+  try {
+    // markdown 코드블록 제거
+    const cleaned = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
+    // JSON 객체만 추출 (앞뒤 불필요한 텍스트 제거)
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]) as PersonInfo;
+  } catch {
+    return null;
+  }
+}
+
+function extractByRegex(text: string): PersonInfo | null {
+  // 이름 추출: 한글 2-4자
+  const nameMatch = text.match(/([가-힣]{2,4})/);
+  // 성별 추출
+  const genderMatch = text.match(/(여자|남자|여|남)/);
+  // 생년월일 추출: 다양한 형식
+  let birthdate: string | null = null;
+  const fullDateMatch = text.match(/(\d{4})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})/);
+  const shortDateMatch = text.match(/(\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})/);
+  const sixDigitMatch = text.match(/(\d{6})/);
+
+  if (fullDateMatch) {
+    birthdate = `${fullDateMatch[1]}${fullDateMatch[2].padStart(2, '0')}${fullDateMatch[3].padStart(2, '0')}`;
+  } else if (shortDateMatch) {
+    const yy = parseInt(shortDateMatch[1]);
+    const yyyy = yy > 30 ? 1900 + yy : 2000 + yy;
+    birthdate = `${yyyy}${shortDateMatch[2].padStart(2, '0')}${shortDateMatch[3].padStart(2, '0')}`;
+  } else if (sixDigitMatch) {
+    const yy = parseInt(sixDigitMatch[1].substring(0, 2));
+    const yyyy = yy > 30 ? 1900 + yy : 2000 + yy;
+    birthdate = `${yyyy}${sixDigitMatch[1].substring(2)}`;
+  }
+
+  // 시간 추출
+  let birthTime: string | null = null;
+  const timeMatch = text.match(/(\d{1,2})\s*[:시]\s*(\d{0,2})\s*(분)?/);
+  const ampmMatch = text.match(/(오전|오후|새벽|아침|저녁|밤)\s*(\d{1,2})\s*[:시]?\s*(\d{0,2})/);
+  if (ampmMatch) {
+    let hour = parseInt(ampmMatch[2]);
+    if (['오후', '저녁', '밤'].includes(ampmMatch[1]) && hour < 12) hour += 12;
+    if (['새벽', '오전', '아침'].includes(ampmMatch[1]) && hour === 12) hour = 0;
+    birthTime = `${String(hour).padStart(2, '0')}:${(ampmMatch[3] || '00').padStart(2, '0')}`;
+  } else if (timeMatch) {
+    birthTime = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
+  }
+  if (text.includes('모름')) birthTime = '모름';
+
+  if (!nameMatch || !genderMatch || !birthdate) return null;
+
+  return {
+    name: nameMatch[1],
+    gender: genderMatch[1] === '여자' ? '여' : genderMatch[1] === '남자' ? '남' : genderMatch[1],
+    birthdate,
+    birthTime: birthTime || '모름',
+  };
+}
 
 export async function extractPersonInfo(
   messageText: string
 ): Promise<PersonInfo | null> {
-  const MAX_RETRIES = 2;
-
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  // 1. AI 추출 시도
+  for (let attempt = 0; attempt <= 2; attempt++) {
     try {
       const response = await getAnthropic().messages.create({
         model: 'claude-haiku-4-5-20251001',
@@ -342,35 +401,28 @@ export async function extractPersonInfo(
         temperature: 0,
         system: `사용자 메시지에서 사주 리포트에 필요한 인적 정보를 추출하세요.
 반드시 아래 JSON 형식으로만 응답하세요.
-{
-  "name": "이름",
-  "gender": "남" 또는 "여",
-  "birthdate": "YYYYMMDD 형식",
-  "birthTime": "HH:mm 형식 (24시간제). 모르면 '모름'"
-}
-- 연도가 2자리면 적절히 4자리로 변환 (예: 95 → 1995, 05 → 2005)
-- 정보가 부족하면 해당 필드를 null로 설정
-- JSON만 출력하세요.`,
+{"name":"이름","gender":"남 또는 여","birthdate":"YYYYMMDD","birthTime":"HH:mm 또는 모름"}
+- 연도가 2자리면 4자리로 변환 (예: 95→1995, 05→2005)
+- 정보가 부족하면 null. JSON만 출력.`,
         messages: [{ role: 'user', content: messageText }],
       });
 
-      const text =
-        response.content[0].type === 'text' ? response.content[0].text : '';
-      const jsonStr = text.replace(/```json?\n?/g, '').replace(/```/g, '').trim();
-      const parsed = JSON.parse(jsonStr);
-      return parsed as PersonInfo;
+      const text = response.content[0].type === 'text' ? response.content[0].text : '';
+      const parsed = tryParseJson(text);
+      if (parsed && parsed.name && parsed.birthdate) return parsed;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      if (attempt < MAX_RETRIES) {
-        console.warn(`[ReportService] extractPersonInfo attempt ${attempt + 1} failed, retrying:`, errorMsg);
+      if (attempt < 2) {
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
-      console.error('[ReportService] extractPersonInfo failed after retries:', errorMsg);
-      return { _error: errorMsg } as unknown as PersonInfo;
+      console.error('[ReportService] AI extraction failed:', errorMsg);
     }
   }
-  return null;
+
+  // 2. AI 실패 → 정규식 폴백
+  console.log('[ReportService] Falling back to regex extraction for:', messageText);
+  return extractByRegex(messageText);
 }
 
 export async function mapServiceToGoodsType(
