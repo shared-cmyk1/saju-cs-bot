@@ -117,9 +117,9 @@ export const messageService = {
       );
 
       if (hasPayment) {
-        // 결제 확인됨 → 서비스 확인부터
-        const historyTexts = (recentMsgs || []).map((m) => m.content).join(' ');
-        const inferredGoodsType = await mapServiceToGoodsType(historyTexts);
+        // 결제 확인됨 → 서비스 확인부터 (고객 메시지만 사용, 봇 메시지 제외)
+        const userTexts = (recentMsgs || []).filter((m) => m.role === 'user').map((m) => m.content).join(' ');
+        const inferredGoodsType = await mapServiceToGoodsType(userTexts);
 
         if (inferredGoodsType) {
           // 서비스도 추론됨 → 개인정보 단계
