@@ -57,6 +57,17 @@ function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
   return DEFAULT_SERVICE_MAP;
 }
 
+const GOODS_TYPE_DISPLAY: Record<string, string> = {
+  CLASSIC: '운해선생',
+  ROMANTIC: '윤화보살',
+  SPICYSAJU: '속박경',
+  REUNION: '청연보살(재회사주)',
+};
+
+function goodsTypeLabel(goodsType: string): string {
+  return GOODS_TYPE_DISPLAY[goodsType] || goodsType;
+}
+
 function getReportApiConfig(account: AccountConfig): { url: string; key: string } {
   const url = account.report_api_url || process.env.SAJU_REPORT_API_URL;
   const key = account.report_api_key || process.env.SAJU_REPORT_API_KEY;
@@ -73,7 +84,7 @@ export function formatConfirmation(
   const timeLabel = (t?: string) => (t === '모름' ? '시간 모름' : t || '');
 
   let msg = `확인해주세요!\n\n`;
-  msg += `서비스: ${goodsType}\n`;
+  msg += `서비스: ${goodsTypeLabel(goodsType)}\n`;
   msg += `이름: ${myInfo.name}\n`;
   msg += `성별: ${genderLabel(myInfo.gender)}\n`;
   msg += `생년월일: ${myInfo.birthdate}\n`;
