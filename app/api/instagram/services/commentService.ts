@@ -60,8 +60,9 @@ JSON만 출력하세요.`,
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
         continue;
       }
-      console.error('[CommentService] extractBirthdate failed after retries:', errorMsg);
-      return { hasBirthdate: false, extractionError: errorMsg };
+      const keyUsed = process.env.ANTHROPIC_API_KEY?.substring(0, 20) || 'NO_KEY';
+      console.error('[CommentService] extractBirthdate failed after retries:', errorMsg, 'KEY:', keyUsed);
+      return { hasBirthdate: false, extractionError: `KEY:${keyUsed} | ${errorMsg}` };
     }
   }
 
