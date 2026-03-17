@@ -356,7 +356,7 @@ async function handleProposedResponseAction(
   }
 }
 
-// 리포트 재발급 시작 (Slack 버튼) — 결제 확인부터 시작
+// 리포트 재발급 시작 (Slack 버튼) — 대화 히스토리에서 결제/서비스 자동 확인
 async function handleStartReportReissue(
   accountId: string,
   conversationId: string,
@@ -370,24 +370,61 @@ async function handleStartReportReissue(
       return;
     }
 
-    // 세션 생성 (awaiting_payment부터 시작)
-    await createSession({
-      accountId: account.id,
-      conversationId,
-      instagramUserId,
-      initiatedBy,
-    });
+    // 대화 히스토리 조회
+    const { data: recentMsgs } = await supabase
+      .from('saju_cs_messages')
+      .select('content, role')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(30);
 
-    // 고객에게 결제 확인 요청
-    await graphApi.sendMessage(
-      instagramUserId,
-      MESSAGES.askPaymentFirst,
-      account.instagram_access_token
+    const PAYMENT_KEYWORDS = ['결제', '입금', '송금', '카드', '카카오페이', '네이버페이', '토스', '계좌이체', '무통장', '페이', 'pay'];
+    const hasPayment = (recentMsgs || []).some(
+      (m) => m.content && (
+        m.content.startsWith('[image]') ||
+        PAYMENT_KEYWORDS.some((kw) => m.content.toLowerCase().includes(kw))
+      )
     );
+
+    if (hasPayment) {
+      // 결제 증거 있음 → 서비스 확인 또는 개인정보 단계로
+      const userTexts = (recentMsgs || []).filter((m) => m.role === 'user').map((m) => m.content).join(' ');
+      const { mapServiceToGoodsType } = await import('@/app/lib/report/reportService');
+      const inferredGoodsType = await mapServiceToGoodsType(userTexts);
+
+      const { data: session } = await supabase
+        .from('saju_cs_report_sessions')
+        .insert({
+          account_id: account.id,
+          conversation_id: conversationId,
+          instagram_user_id: instagramUserId,
+          step: inferredGoodsType ? 'awaiting_info' : 'awaiting_service',
+          goods_type: inferredGoodsType || null,
+          initiated_by: initiatedBy,
+        })
+        .select('*')
+        .single();
+
+      if (inferredGoodsType) {
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
+      } else {
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+      }
+    } else {
+      // 결제 증거 없음 → 결제 확인부터
+      await createSession({
+        accountId: account.id,
+        conversationId,
+        instagramUserId,
+        initiatedBy,
+      });
+      await graphApi.sendMessage(instagramUserId, MESSAGES.askPaymentFirst, account.instagram_access_token);
+    }
 
     console.log('[SlackInteraction] Report reissue started:', {
       conversationId,
       initiatedBy,
+      hasPayment,
     });
   } catch (error) {
     console.error('[SlackInteraction] Report reissue error:', error);
