@@ -175,7 +175,8 @@ export type ReportSessionStep =
   | 'generating'
   | 'completed'
   | 'failed'
-  | 'expired';
+  | 'expired'
+  | 'cancelled';
 
 export interface PersonInfo {
   name?: string;

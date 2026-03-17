@@ -171,7 +171,7 @@ export async function handleSessionMessage(
 
   // "취소" 감지
   if (/취소|그만|안할래|안 할래/.test(messageText)) {
-    await updateSession(session.id, { step: 'expired' });
+    await updateSession(session.id, { step: 'cancelled' });
     await graphApi.sendMessage(userId, MESSAGES.cancelled, token);
     return;
   }
@@ -228,15 +228,7 @@ async function handleAwaitingInfo(
   messageText: string,
   account: AccountConfig
 ): Promise<void> {
-  const keyPrefix = process.env.ANTHROPIC_API_KEY?.substring(0, 20) || 'NO_KEY';
   const info = await extractPersonInfo(messageText);
-  const errMsg = (info as unknown as {_error?: string})?._error || '';
-
-  // 키 + 입력 + 결과를 한번에 기록
-  await supabase
-    .from('saju_cs_report_sessions')
-    .update({ shop_order_no: `KEY:${keyPrefix} | IN:${messageText.substring(0, 40)} | ${errMsg ? 'ERR:' + errMsg.substring(0, 80) : 'OK:' + JSON.stringify(info).substring(0, 80)}` })
-    .eq('id', session.id);
 
   if (!info || !info.name || !info.gender || !info.birthdate) {
     await graphApi.sendMessage(
@@ -329,6 +321,13 @@ async function handleConfirming(
 
 // === AI 추출 (+ 정규식 폴백) ===
 
+function normalizeGender(g?: string | null): string | undefined {
+  if (!g) return undefined;
+  if (g === '남' || g === '남자' || g === '남성' || g === 'M' || g === 'male') return '남';
+  if (g === '여' || g === '여자' || g === '여성' || g === 'F' || g === 'female') return '여';
+  return g;
+}
+
 function tryParseJson(text: string): PersonInfo | null {
   try {
     // markdown 코드블록 제거
@@ -336,54 +335,120 @@ function tryParseJson(text: string): PersonInfo | null {
     // JSON 객체만 추출 (앞뒤 불필요한 텍스트 제거)
     const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]) as PersonInfo;
+    const parsed = JSON.parse(jsonMatch[0]) as PersonInfo;
+
+    // gender 정규화
+    if (parsed.gender) {
+      parsed.gender = normalizeGender(parsed.gender);
+    }
+
+    // birthdate에서 하이픈/점 제거 (AI가 "1995-03-02" 형태로 줄 수 있음)
+    if (parsed.birthdate) {
+      parsed.birthdate = parsed.birthdate.replace(/[.\-/]/g, '');
+    }
+
+    return parsed;
   } catch {
     return null;
   }
 }
 
-function extractByRegex(text: string): PersonInfo | null {
-  // 이름 추출: 한글 2-4자
-  const nameMatch = text.match(/([가-힣]{2,4})/);
-  // 성별 추출
-  const genderMatch = text.match(/(여자|남자|여|남)/);
-  // 생년월일 추출: 다양한 형식
-  let birthdate: string | null = null;
-  const fullDateMatch = text.match(/(\d{4})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})/);
-  const shortDateMatch = text.match(/(\d{2})\s*[.년/-]\s*(\d{1,2})\s*[.월/-]\s*(\d{1,2})/);
-  const sixDigitMatch = text.match(/(\d{6})/);
+function toFullYear(yy: number): number {
+  // 현재 연도 기준 동적 판단 (26 → 2026이면 27 이상은 1900년대)
+  const currentYearShort = new Date().getFullYear() % 100;
+  return yy > currentYearShort ? 1900 + yy : 2000 + yy;
+}
 
-  if (fullDateMatch) {
+function extractByRegex(text: string): PersonInfo | null {
+  // 성별 추출 (이름보다 먼저 추출하여 이름 매칭에서 제외)
+  const genderMatch = text.match(/(여자|남자|여성|남성|여|남)/);
+
+  // 이름 추출: 한글 2-4자 (성별 키워드 제외)
+  const genderWords = new Set(['여자', '남자', '여성', '남성', '여', '남']);
+  let name: string | null = null;
+  const nameRegex = /[가-힣]{2,4}/g;
+  let m;
+  while ((m = nameRegex.exec(text)) !== null) {
+    if (!genderWords.has(m[0])) {
+      name = m[0];
+      break;
+    }
+  }
+
+  // 생년월일 추출: 다양한 형식 지원
+  let birthdate: string | null = null;
+
+  // 8자리 숫자: 19950302, 20050315
+  const eightDigitMatch = text.match(/(?<!\d)((?:19|20)\d{6})(?!\d)/);
+  // YYYY.MM.DD / YYYY-MM-DD / YYYY년MM월DD일
+  const fullDateMatch = text.match(/(\d{4})\s*[.년/\-]\s*(\d{1,2})\s*[.월/\-]?\s*(\d{1,2})\s*일?/);
+  // YY.MM.DD / YY년MM월DD일
+  const shortDateMatch = text.match(/(?<!\d)(\d{2})\s*[.년/\-]\s*(\d{1,2})\s*[.월/\-]?\s*(\d{1,2})\s*일?/);
+  // 6자리 숫자: 950302
+  const sixDigitMatch = text.match(/(?<!\d)(\d{6})(?!\d)/);
+  // 띄어쓰기 구분: "95 3 2", "1995 3 2"
+  const spaceDateMatch = text.match(/(?<!\d)(\d{2,4})\s+(\d{1,2})\s+(\d{1,2})(?!\d)/);
+
+  if (eightDigitMatch) {
+    birthdate = eightDigitMatch[1];
+  } else if (fullDateMatch) {
     birthdate = `${fullDateMatch[1]}${fullDateMatch[2].padStart(2, '0')}${fullDateMatch[3].padStart(2, '0')}`;
   } else if (shortDateMatch) {
-    const yy = parseInt(shortDateMatch[1]);
-    const yyyy = yy > 30 ? 1900 + yy : 2000 + yy;
+    const yyyy = toFullYear(parseInt(shortDateMatch[1]));
     birthdate = `${yyyy}${shortDateMatch[2].padStart(2, '0')}${shortDateMatch[3].padStart(2, '0')}`;
   } else if (sixDigitMatch) {
     const yy = parseInt(sixDigitMatch[1].substring(0, 2));
-    const yyyy = yy > 30 ? 1900 + yy : 2000 + yy;
+    const yyyy = toFullYear(yy);
     birthdate = `${yyyy}${sixDigitMatch[1].substring(2)}`;
+  } else if (spaceDateMatch) {
+    const yearPart = spaceDateMatch[1];
+    const year = yearPart.length === 4 ? parseInt(yearPart) : toFullYear(parseInt(yearPart));
+    birthdate = `${year}${spaceDateMatch[2].padStart(2, '0')}${spaceDateMatch[3].padStart(2, '0')}`;
   }
 
   // 시간 추출
   let birthTime: string | null = null;
-  const timeMatch = text.match(/(\d{1,2})\s*[:시]\s*(\d{0,2})\s*(분)?/);
-  const ampmMatch = text.match(/(오전|오후|새벽|아침|저녁|밤)\s*(\d{1,2})\s*[:시]?\s*(\d{0,2})/);
-  if (ampmMatch) {
-    let hour = parseInt(ampmMatch[2]);
-    if (['오후', '저녁', '밤'].includes(ampmMatch[1]) && hour < 12) hour += 12;
-    if (['새벽', '오전', '아침'].includes(ampmMatch[1]) && hour === 12) hour = 0;
-    birthTime = `${String(hour).padStart(2, '0')}:${(ampmMatch[3] || '00').padStart(2, '0')}`;
-  } else if (timeMatch) {
-    birthTime = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
-  }
-  if (text.includes('모름')) birthTime = '모름';
+  // "모름" / "몰라요" / "모르겠" 체크
+  if (/모름|몰라|모르겠/.test(text)) {
+    birthTime = '모름';
+  } else {
+    // 오전/오후 + 숫자 형식 (오후 2시, 오후2시30분, 오전 8:30)
+    const ampmMatch = text.match(/(오전|오후|새벽|아침|저녁|밤)\s*(\d{1,2})\s*[:시]?\s*(\d{0,2})\s*(분)?/);
+    // 숫자시 형식 (14시, 2시30분, 14:30)
+    const timeMatch = text.match(/(\d{1,2})\s*[:시]\s*(\d{0,2})\s*(분)?/);
 
-  if (!nameMatch || !genderMatch || !birthdate) return null;
+    if (ampmMatch) {
+      let hour = parseInt(ampmMatch[2]);
+      if (['오후', '저녁', '밤'].includes(ampmMatch[1]) && hour < 12) hour += 12;
+      if (['새벽', '오전', '아침'].includes(ampmMatch[1]) && hour === 12) hour = 0;
+      birthTime = `${String(hour).padStart(2, '0')}:${(ampmMatch[3] || '00').padStart(2, '0')}`;
+    } else if (timeMatch) {
+      // 시간 매칭이 생년월일 숫자와 겹치지 않도록 검증
+      const hourVal = parseInt(timeMatch[1]);
+      if (hourVal >= 0 && hourVal <= 23) {
+        birthTime = `${timeMatch[1].padStart(2, '0')}:${(timeMatch[2] || '00').padStart(2, '0')}`;
+      }
+    }
+  }
+
+  if (!name || !genderMatch || !birthdate) return null;
+
+  // 생년월일 유효성 기본 검증
+  const year = parseInt(birthdate.substring(0, 4));
+  const month = parseInt(birthdate.substring(4, 6));
+  const day = parseInt(birthdate.substring(6, 8));
+  if (year < 1920 || year > new Date().getFullYear() || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const rawGender = genderMatch[1];
+  const gender = rawGender === '여자' || rawGender === '여성' ? '여'
+    : rawGender === '남자' || rawGender === '남성' ? '남'
+    : rawGender;
 
   return {
-    name: nameMatch[1],
-    gender: genderMatch[1] === '여자' ? '여' : genderMatch[1] === '남자' ? '남' : genderMatch[1],
+    name,
+    gender,
     birthdate,
     birthTime: birthTime || '모름',
   };
@@ -400,10 +465,22 @@ export async function extractPersonInfo(
         max_tokens: 200,
         temperature: 0,
         system: `사용자 메시지에서 사주 리포트에 필요한 인적 정보를 추출하세요.
-반드시 아래 JSON 형식으로만 응답하세요.
+반드시 아래 JSON 형식으로만 응답하세요. JSON 외 다른 텍스트는 출력하지 마세요.
 {"name":"이름","gender":"남 또는 여","birthdate":"YYYYMMDD","birthTime":"HH:mm 또는 모름"}
-- 연도가 2자리면 4자리로 변환 (예: 95→1995, 05→2005)
-- 정보가 부족하면 null. JSON만 출력.`,
+
+규칙:
+- 연도가 2자리면 4자리로 변환 (95→1995, 05→2005, 00→2000)
+- gender는 반드시 "남" 또는 "여"로 통일 (남자→남, 여자→여, 남성→남, 여성→여)
+- birthTime을 모르거나 언급이 없으면 "모름"
+- 정보가 부족하면 해당 필드를 null로 설정
+
+예시:
+"김철수 남자 95년 3월 2일 오후 2시" → {"name":"김철수","gender":"남","birthdate":"19950302","birthTime":"14:00"}
+"이영희 여 19970515 모름" → {"name":"이영희","gender":"여","birthdate":"19970515","birthTime":"모름"}
+"박지민 남 030812 새벽3시" → {"name":"박지민","gender":"남","birthdate":"20030812","birthTime":"03:00"}
+"홍길동 남자 1988.12.25 오전11시30분" → {"name":"홍길동","gender":"남","birthdate":"19881225","birthTime":"11:30"}
+"여 김하늘 01년 1월 3일" → {"name":"김하늘","gender":"여","birthdate":"20010103","birthTime":"모름"}
+"최수진 여자 구공년 팔월 이십일" → {"name":"최수진","gender":"여","birthdate":"19990820","birthTime":"모름"}`,
         messages: [{ role: 'user', content: messageText }],
       });
 
@@ -621,6 +698,20 @@ async function submitReport(session: ReportSession, account: AccountConfig): Pro
   try {
     const myInfo = session.my_info;
 
+    // REUNION인데 상대방 필수 정보가 없으면 상대방 정보 요청으로 복귀
+    if (
+      session.goods_type === 'REUNION' &&
+      (!session.partner_info?.name || !session.partner_info?.birthdate)
+    ) {
+      await updateSession(session.id, { step: 'awaiting_partner_info' });
+      await graphApi.sendMessage(
+        session.instagram_user_id,
+        MESSAGES.askPartnerInfo,
+        account.instagram_access_token
+      );
+      return;
+    }
+
     const params =
       session.goods_type === 'REUNION'
         ? ({
@@ -629,9 +720,9 @@ async function submitReport(session: ReportSession, account: AccountConfig): Pro
             myGender: myInfo.gender!,
             myBirthdate: myInfo.birthdate!,
             myBirthTime: myInfo.birthTime || 'unknown',
-            partnerName: session.partner_info?.name || '상대방',
-            partnerGender: session.partner_info?.gender || '여',
-            partnerBirthdate: session.partner_info?.birthdate || '',
+            partnerName: session.partner_info!.name!,
+            partnerGender: session.partner_info!.gender || '여',
+            partnerBirthdate: session.partner_info!.birthdate!,
             partnerBirthTime: session.partner_info?.birthTime || 'unknown',
           } satisfies CreateReunionReportParams)
         : {

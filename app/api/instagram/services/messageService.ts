@@ -124,7 +124,7 @@ export const messageService = {
 
         if (inferredGoodsType) {
           // 서비스도 추론됨 → 개인정보 단계
-          await supabase
+          const { error: sessionErr } = await supabase
             .from('saju_cs_report_sessions')
             .insert({
               account_id: account.id,
@@ -134,10 +134,14 @@ export const messageService = {
               goods_type: inferredGoodsType,
               initiated_by: 'dm_reissue',
             });
+          if (sessionErr) {
+            console.error('[MessageService] Failed to create report session:', sessionErr);
+            return;
+          }
           await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
         } else {
           // 서비스 추론 못함 → 서비스 확인 단계
-          await supabase
+          const { error: sessionErr } = await supabase
             .from('saju_cs_report_sessions')
             .insert({
               account_id: account.id,
@@ -146,6 +150,10 @@ export const messageService = {
               step: 'awaiting_service',
               initiated_by: 'dm_reissue',
             });
+          if (sessionErr) {
+            console.error('[MessageService] Failed to create report session:', sessionErr);
+            return;
+          }
           await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
         }
       } else {
