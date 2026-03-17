@@ -4,6 +4,7 @@ import * as templates from './messageTemplates';
 import { matchRule, generateAutoResponse } from '@/app/lib/ai/learningService';
 import {
   postEscalation,
+  postReissueEscalation,
   postFollowUpMessage,
   postResponseProposal,
 } from '@/app/lib/slack/slackClient';
@@ -201,8 +202,18 @@ export const messageService = {
       // 5. 승인된 자동 규칙 매칭 시도
       const match = await matchRule(account.id, messageText);
 
-      if (match) {
-        // 규칙 매칭 → Slack에 자동 응답 제안 (보내기/거절 버튼)
+      if (match && match.rule.category === '결제오류_결과미수신') {
+        // 리포트 미수신 → 자동응답 없이 리포트 재발급 버튼만 있는 에스컬레이션
+        await postReissueEscalation({
+          accountId: account.id,
+          channelId: account.slack_channel_id,
+          conversationId: conversation.id,
+          instagramUserId,
+          username: conversation.instagram_username,
+          userQuestion: messageText,
+        });
+      } else if (match) {
+        // 기타 규칙 매칭 → Slack에 자동 응답 제안 (보내기/거절 버튼)
         const proposedResponse = await generateAutoResponse(match.rule, messageText);
 
         const { data: pending, error } = await supabase

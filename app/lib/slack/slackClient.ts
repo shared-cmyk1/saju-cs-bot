@@ -109,6 +109,78 @@ export async function postEscalation(params: SlackEscalationParams): Promise<voi
   }
 }
 
+// 리포트 미수신 문의 → 리포트 재발급 버튼만 있는 에스컬레이션
+export async function postReissueEscalation(params: SlackEscalationParams): Promise<void> {
+  const blocks = [
+    {
+      type: 'header',
+      text: { type: 'plain_text', text: '리포트 미수신 문의', emoji: true },
+    },
+    {
+      type: 'section',
+      fields: [
+        {
+          type: 'mrkdwn',
+          text: `*고객:*\n@${params.username || '알 수 없음'}`,
+        },
+        {
+          type: 'mrkdwn',
+          text: '*유형:*\n결제오류/결과미수신',
+        },
+      ],
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*메시지:*\n>${params.userQuestion}`,
+      },
+    },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: '리포트 재발급', emoji: true },
+          style: 'primary',
+          action_id: 'start_report_reissue',
+          value: JSON.stringify({
+            conversation_id: params.conversationId,
+            instagram_user_id: params.instagramUserId,
+            account_id: params.accountId,
+          }),
+        },
+      ],
+    },
+  ];
+
+  const result = await slackAPI('chat.postMessage', {
+    channel: params.channelId,
+    text: `리포트 미수신: @${params.username || '알 수 없음'} - "${params.userQuestion}"`,
+    blocks,
+  });
+
+  const { data: lastUserMsg } = await supabase
+    .from('saju_cs_messages')
+    .select('id')
+    .eq('conversation_id', params.conversationId)
+    .eq('role', 'user')
+    .order('message_index', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (lastUserMsg) {
+    await supabase.from('saju_cs_escalations').insert({
+      account_id: params.accountId,
+      conversation_id: params.conversationId,
+      user_message_id: lastUserMsg.id,
+      slack_channel_id: result.channel,
+      slack_message_ts: result.ts,
+      status: 'pending',
+    });
+  }
+}
+
 // 이미 에스컬레이션 진행 중인 대화에서 추가 메시지를 Slack에 전달
 export async function postFollowUpMessage(params: {
   channelId: string;
