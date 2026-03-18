@@ -63,6 +63,10 @@ const GOODS_TYPE_DISPLAY: Record<string, string> = {
   SPICYSAJU: '속박경',
   REUNION: '청연보살(재회사주)',
   NEW: '신년사주',
+  PREMIUM_SAJU: '프리미엄 종합사주',
+  ADULT: '홍화무녀(19금사주)',
+  SEOLHWA: '설화낭자 신년사주',
+  REUNION_JUJANGSO: '재회사주',
 };
 
 function goodsTypeLabel(goodsType: string, account?: AccountConfig): string {

@@ -164,7 +164,7 @@ export interface InstagramWebhookBody {
 
 // === Report Session Types ===
 
-export type GoodsType = 'CLASSIC' | 'ROMANTIC' | 'SPICYSAJU' | 'REUNION' | 'NEW';
+export type GoodsType = 'CLASSIC' | 'ROMANTIC' | 'SPICYSAJU' | 'REUNION' | 'NEW' | 'PREMIUM_SAJU' | 'ADULT' | 'SEOLHWA' | 'REUNION_JUJANGSO';
 
 export type ReportSessionStep =
   | 'awaiting_service'
