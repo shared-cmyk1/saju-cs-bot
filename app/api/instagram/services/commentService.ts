@@ -127,7 +127,7 @@ export async function handleComment(
     // 계정별 댓글 미리보기 goodsTypes 설정
     // service_map에 comment_goods_types가 있으면 사용, 없으면 기본값
     const commentGoodsTypes = (account.service_map as Record<string, unknown>)?.comment_goods_types as string[] | undefined
-      || ['CLASSIC', 'ROMANTIC', 'SPICYSAJU'];
+      || ['ROMANTIC'];
 
     const previewResult = await createPreview(
       {
