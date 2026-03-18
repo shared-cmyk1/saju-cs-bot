@@ -84,13 +84,14 @@ export async function GET(request: NextRequest) {
 
     try {
       const commentGoodsTypes = (account.service_map as Record<string, unknown>)?.comment_goods_types as string[] | undefined
-        || ['CLASSIC', 'ROMANTIC', 'SPICYSAJU'];
+        || ['ROMANTIC'];
 
       const previewResult = await createPreview(
         {
           name: comment.instagram_username || '고객',
+          gender: '여',
           birthdate: comment.birthdate,
-          birthTime: comment.birth_time || undefined,
+          birthTime: comment.birth_time || '모름',
           goodsTypes: commentGoodsTypes,
         },
         account.report_api_url,

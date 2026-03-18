@@ -132,9 +132,9 @@ export async function handleComment(
     const previewResult = await createPreview(
       {
         name: username || '고객',
-        gender: extraction.gender || undefined,
+        gender: extraction.gender || '여',
         birthdate: extraction.birthdate,
-        birthTime: extraction.birthTime || undefined,
+        birthTime: extraction.birthTime || '모름',
         goodsTypes: commentGoodsTypes,
       },
       account.report_api_url,
