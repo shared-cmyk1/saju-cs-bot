@@ -62,9 +62,16 @@ const GOODS_TYPE_DISPLAY: Record<string, string> = {
   ROMANTIC: '윤화보살',
   SPICYSAJU: '속박경',
   REUNION: '청연보살(재회사주)',
+  NEW: '신년사주',
 };
 
-function goodsTypeLabel(goodsType: string): string {
+function goodsTypeLabel(goodsType: string, account?: AccountConfig): string {
+  // 계정별 service_map에서 역방향 조회 (display name)
+  if (account?.service_map) {
+    for (const [label, type] of Object.entries(account.service_map)) {
+      if (type === goodsType) return label;
+    }
+  }
   return GOODS_TYPE_DISPLAY[goodsType] || goodsType;
 }
 
@@ -78,13 +85,14 @@ function getReportApiConfig(account: AccountConfig): { url: string; key: string 
 export function formatConfirmation(
   goodsType: GoodsType,
   myInfo: PersonInfo,
-  partnerInfo?: PersonInfo
+  partnerInfo?: PersonInfo,
+  account?: AccountConfig
 ): string {
   const genderLabel = (g?: string) => (g === '남' ? '남성' : g === '여' ? '여성' : g || '');
   const timeLabel = (t?: string) => (t === '모름' ? '시간 모름' : t || '');
 
   let msg = `확인해주세요!\n\n`;
-  msg += `서비스: ${goodsTypeLabel(goodsType)}\n`;
+  msg += `서비스: ${goodsTypeLabel(goodsType, account)}\n`;
   msg += `이름: ${myInfo.name}\n`;
   msg += `성별: ${genderLabel(myInfo.gender)}\n`;
   msg += `생년월일: ${myInfo.birthdate}\n`;
@@ -254,7 +262,7 @@ async function handleAwaitingInfo(
 
   // 확인 단계로 이동
   await updateSession(session.id, { step: 'confirming', my_info: info });
-  const confirmMsg = formatConfirmation(session.goods_type!, info);
+  const confirmMsg = formatConfirmation(session.goods_type!, info, undefined, account);
   await graphApi.sendMessage(session.instagram_user_id, confirmMsg, account.instagram_access_token);
 }
 
@@ -282,7 +290,8 @@ async function handleAwaitingPartnerInfo(
   const confirmMsg = formatConfirmation(
     session.goods_type!,
     session.my_info,
-    info
+    info,
+    account
   );
   await graphApi.sendMessage(session.instagram_user_id, confirmMsg, account.instagram_access_token);
 }
@@ -618,7 +627,7 @@ export async function tryAutoSessionFromWinnerDM(
   }
 
   // 확인 메시지 전송
-  const confirmMsg = formatConfirmation(goodsType, info);
+  const confirmMsg = formatConfirmation(goodsType, info, undefined, account);
   await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
 
   console.log(
