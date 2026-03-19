@@ -389,10 +389,11 @@ async function handleStartReportReissue(
     if (hasPayment) {
       // 결제 증거 있음 → 서비스/개인정보 유추
       const userTexts = (recentMsgs || []).filter((m) => m.role === 'user').map((m) => m.content).join(' ');
-      const { mapServiceToGoodsType, extractPersonInfo, formatConfirmation } = await import('@/app/lib/report/reportService');
+      const { mapServiceToGoodsType, extractPersonInfo, formatConfirmation, getServiceMap } = await import('@/app/lib/report/reportService');
 
+      const serviceMap = getServiceMap(account);
       const [inferredGoodsType, inferredInfo] = await Promise.all([
-        mapServiceToGoodsType(userTexts),
+        mapServiceToGoodsType(userTexts, serviceMap),
         extractPersonInfo(userTexts),
       ]);
 
@@ -424,12 +425,12 @@ async function handleStartReportReissue(
         });
 
       if (step === 'confirming') {
-        const confirmMsg = formatConfirmation(inferredGoodsType!, inferredInfo!);
+        const confirmMsg = formatConfirmation(inferredGoodsType!, inferredInfo!, undefined, account);
         await graphApi.sendMessage(instagramUserId, confirmMsg, account.instagram_access_token);
       } else if (step === 'awaiting_info') {
         await graphApi.sendMessage(instagramUserId, MESSAGES.askInfo, account.instagram_access_token);
       } else {
-        await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+        await graphApi.sendMessage(instagramUserId, MESSAGES.askService(account), account.instagram_access_token);
       }
     } else {
       // 결제 증거 없음 → 결제 확인부터

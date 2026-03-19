@@ -1,12 +1,11 @@
 import { supabase } from '@/app/lib/supabase/client';
 import * as graphApi from './graphApi';
 import * as templates from './messageTemplates';
-import { matchRule, generateAutoResponse } from '@/app/lib/ai/learningService';
+import { matchRule } from '@/app/lib/ai/learningService';
 import {
   postEscalation,
   postReissueEscalation,
   postFollowUpMessage,
-  postResponseProposal,
 } from '@/app/lib/slack/slackClient';
 import {
   getActiveSession,
@@ -154,7 +153,7 @@ export const messageService = {
             console.error('[MessageService] Failed to create report session:', sessionErr);
             return;
           }
-          await graphApi.sendMessage(instagramUserId, MESSAGES.askService, account.instagram_access_token);
+          await graphApi.sendMessage(instagramUserId, MESSAGES.askService(account), account.instagram_access_token);
         }
       } else {
         // 결제 확인 안됨 → 결제 확인부터 시작
@@ -211,7 +210,7 @@ export const messageService = {
       const match = await matchRule(account.id, messageText);
 
       if (match && match.rule.category === '결제오류_결과미수신') {
-        // 리포트 미수신 → 자동응답 없이 리포트 재발급 버튼만 있는 에스컬레이션
+        // 리포트 미수신 → 리포트 재발급 버튼만 있는 에스컬레이션
         await postReissueEscalation({
           accountId: account.id,
           channelId: account.slack_channel_id,
@@ -220,47 +219,8 @@ export const messageService = {
           username: conversation.instagram_username,
           userQuestion: messageText,
         });
-      } else if (match) {
-        // 기타 규칙 매칭 → Slack에 자동 응답 제안 (보내기/거절 버튼)
-        const proposedResponse = await generateAutoResponse(match.rule, messageText);
-
-        const { data: pending, error } = await supabase
-          .from('saju_cs_pending_responses')
-          .insert({
-            account_id: account.id,
-            rule_id: match.rule.id,
-            conversation_id: conversation.id,
-            instagram_user_id: instagramUserId,
-            customer_message: messageText,
-            proposed_response: proposedResponse,
-            status: 'pending',
-          })
-          .select('id')
-          .single();
-
-        if (!error && pending) {
-          const { channelId, messageTs } = await postResponseProposal({
-            channelId: account.slack_channel_id,
-            accountId: account.id,
-            pendingResponseId: pending.id,
-            username: conversation.instagram_username,
-            customerMessage: messageText,
-            proposedResponse,
-            category: match.rule.category,
-            conversationId: conversation.id,
-            instagramUserId: instagramUserId,
-          });
-
-          await supabase
-            .from('saju_cs_pending_responses')
-            .update({
-              slack_message_ts: messageTs,
-              slack_channel_id: channelId,
-            })
-            .eq('id', pending.id);
-        }
       } else {
-        // 6. 매칭 없음 → Slack에 에스컬레이션
+        // 기타 모든 메시지 → Slack에 에스컬레이션
         await postEscalation({
           accountId: account.id,
           channelId: account.slack_channel_id,

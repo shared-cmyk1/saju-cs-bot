@@ -3,7 +3,7 @@ import { messageService } from './messageService';
 import { handleComment } from './commentService';
 import { supabase } from '@/app/lib/supabase/client';
 import { updateEscalationMessage } from '@/app/lib/slack/slackClient';
-import { captureLearningPair } from '@/app/lib/ai/learningService';
+
 import { resolveAccountByInstagramId } from '@/app/lib/account/accountResolver';
 
 export const webhookHandler = {
@@ -73,19 +73,6 @@ export const webhookHandler = {
         .order('message_index', { ascending: false })
         .limit(1)
         .single();
-
-      // 학습 캡처 (fire-and-forget)
-      if (userMsg?.content && agentResponse) {
-        captureLearningPair(
-          account.id,
-          account.slack_channel_id,
-          conversation.id,
-          userMsg.content,
-          agentResponse
-        ).catch(
-          (err) => console.error('[WebhookHandler] Learning capture error:', err)
-        );
-      }
 
       // pending 에스컬레이션 찾기
       const { data: escalation } = await supabase

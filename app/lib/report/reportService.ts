@@ -26,8 +26,11 @@ const DEFAULT_SERVICE_MAP: Record<string, GoodsType> = {
 const MESSAGES = {
   askPaymentFirst:
     '리포트 재발급을 도와드릴게요!\n\n먼저 결제 내역을 확인해야 해요 💳\n결제 내역 캡처 화면을 보내주시거나, 결제 시점과 수단을 알려주세요.\n\n예) 3월 15일 카카오페이로 결제했어요',
-  askService:
-    '결제 확인 완료! ✅\n\n어떤 서비스를 이용하셨나요?\n(예: 윤화보살, 운해선생, 속박경, 청연보살 등)',
+  askService: (account?: AccountConfig) => {
+    const serviceMap = account ? getServiceMap(account) : DEFAULT_SERVICE_MAP;
+    const serviceNames = Object.keys(serviceMap).filter(k => k !== 'comment_goods_types').join(', ');
+    return `결제 확인 완료! ✅\n\n어떤 서비스를 이용하셨나요?\n(예: ${serviceNames})`;
+  },
   askInfo:
     '본인의 이름, 성별, 생년월일, 태어난 시간을 알려주세요.\n\n예) 김철수 남자 95년 3월 2일 오후 2시\n\n* 태어난 시간을 모르시면 "모름"이라고 적어주세요.',
   askPartnerInfo:
@@ -41,15 +44,21 @@ const MESSAGES = {
   cancelled: '리포트 재발급이 취소되었습니다. 다른 문의가 있으시면 말씀해주세요!',
   extractionFailed:
     '입력하신 정보를 정확히 이해하지 못했어요.\n이름, 성별, 생년월일, 태어난 시간을 다시 알려주시겠어요?\n\n예) 김철수 남자 95년 3월 2일 오후 2시',
-  serviceNotFound:
-    '해당 서비스를 찾지 못했어요.\n아래 서비스 중 하나를 선택해주세요:\n\n• 운해선생\n• 윤화보살 / 연애사주\n• 속박경 / 29금사주\n• 청연보살 / 재회사주 / 재연도',
+  serviceNotFound: (account?: AccountConfig) => {
+    const serviceMap = account ? getServiceMap(account) : DEFAULT_SERVICE_MAP;
+    const serviceList = Object.keys(serviceMap)
+      .filter(k => k !== 'comment_goods_types')
+      .map(k => `• ${k}`)
+      .join('\n');
+    return `해당 서비스를 찾지 못했어요.\n아래 서비스 중 하나를 선택해주세요:\n\n${serviceList}`;
+  },
   askPayment:
     '결제 확인이 필요해요! 💳\n\n결제 내역 캡처 화면을 보내주시거나, 결제 시점과 수단을 알려주세요.\n\n예) 3월 15일 카카오페이로 결제했어요',
   paymentConfirmed:
     '결제 확인 완료! 리포트 생성을 시작할게요 😊',
 };
 
-function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
+export function getServiceMap(account: AccountConfig): Record<string, GoodsType> {
   if (account.service_map && Object.keys(account.service_map).length > 0) {
     // 계정별 맵 + 기본 맵 병합 (계정별이 우선)
     return { ...DEFAULT_SERVICE_MAP, ...(account.service_map as Record<string, GoodsType>) };
@@ -224,7 +233,7 @@ async function handleAwaitingService(
   const goodsType = await mapServiceToGoodsType(messageText, serviceMap);
 
   if (!goodsType) {
-    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.serviceNotFound, account.instagram_access_token);
+    await graphApi.sendMessage(session.instagram_user_id, MESSAGES.serviceNotFound(account), account.instagram_access_token);
     return;
   }
 
@@ -691,7 +700,7 @@ async function handleAwaitingPayment(
     await updateSession(session.id, { step: 'awaiting_service' });
     await graphApi.sendMessage(
       session.instagram_user_id,
-      MESSAGES.askService,
+      MESSAGES.askService(account),
       account.instagram_access_token
     );
     return;
