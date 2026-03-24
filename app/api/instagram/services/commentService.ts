@@ -69,6 +69,32 @@ JSON만 출력하세요.`,
   return { hasBirthdate: false, extractionError: 'Unexpected retry loop exit' };
 }
 
+// 계정별 DM 메시지 템플릿
+function getDmTemplate(account: AccountConfig, username: string | undefined, previewLinks: string): string {
+  const name = username ? ` @${username}` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `안녕하세요${name}님! 💜\n\n운세저장소에서 미리보기 링크를 보내드려요!\n\n${previewLinks}\n\n링크를 눌러 나만의 운세를 확인해보세요 🔮`;
+    case 'saju_maeul':
+      return `안녕하세요${name}님! 🌙\n\n사주마을 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n아래 링크에서 사주 결과를 확인해보세요 ✨`;
+    default:
+      return `안녕하세요${name}님! 🔮\n\n${account.display_name} 보고서 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+  }
+}
+
+// 계정별 대댓글 템플릿
+function getCommentReplyTemplate(account: AccountConfig, username: string | undefined): string {
+  const mention = username ? `@${username} ` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `${mention}💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
+    case 'saju_maeul':
+      return `${mention}🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
+    default:
+      return `${mention}✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
+  }
+}
+
 // 댓글 처리 메인 로직
 export async function handleComment(
   comment: InstagramCommentEvent['value'],
@@ -162,22 +188,17 @@ export async function handleComment(
       .map((p) => `${p.title}: ${p.previewUrl}`)
       .join('\n');
 
-    const dmMessage = `안녕하세요${username ? ` @${username}` : ''}님! 🔮
-
-${account.display_name} 보고서 미리보기 링크를 전달드립니다!
-
-${previewLinks}
-
-링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+    const dmMessage = getDmTemplate(account, username, previewLinks);
 
     // DM 발송 (Private Reply - 댓글 기반이라 24시간 제한 없음)
     await graphApi.sendPrivateReply(commentId, dmMessage, account.instagram_access_token);
 
-    // 댓글에 대댓글 달기
+    // 미디어에 댓글 달기 (@멘션으로 대댓글 효과)
     try {
+      const replyText = getCommentReplyTemplate(account, username);
       await graphApi.replyToComment(
-        commentId,
-        `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`,
+        comment.media.id,
+        replyText,
         account.instagram_access_token
       );
     } catch (replyError) {

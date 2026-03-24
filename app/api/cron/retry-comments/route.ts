@@ -6,6 +6,32 @@ import { createPreview } from '@/app/lib/report/reportApiClient';
 
 const anthropic = new Anthropic();
 
+// 계정별 DM 템플릿
+function getCronDmTemplate(account: Record<string, unknown>, username: string | null, previewLinks: string): string {
+  const name = username ? ` @${username}` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `안녕하세요${name}님! 💜\n\n운세저장소에서 미리보기 링크를 보내드려요!\n\n${previewLinks}\n\n링크를 눌러 나만의 운세를 확인해보세요 🔮`;
+    case 'saju_maeul':
+      return `안녕하세요${name}님! 🌙\n\n사주마을 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n아래 링크에서 사주 결과를 확인해보세요 ✨`;
+    default:
+      return `안녕하세요${name}님! 🔮\n\n${account.display_name} 보고서 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+  }
+}
+
+// 계정별 대댓글 템플릿
+function getCronReplyTemplate(account: Record<string, unknown>, username: string | null): string {
+  const mention = username ? `@${username} ` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `${mention}💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
+    case 'saju_maeul':
+      return `${mention}🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
+    default:
+      return `${mention}✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
+  }
+}
+
 // Vercel Cron으로 매시간 실행: 실패한 댓글 재추출 + 재발송
 // GET /api/cron/retry-comments (Authorization: Bearer CRON_SECRET)
 export async function GET(request: NextRequest) {
@@ -104,18 +130,18 @@ export async function GET(request: NextRequest) {
         .map((p) => `${p.title}: ${p.previewUrl}`)
         .join('\n');
 
-      const dmMessage = `안녕하세요${comment.instagram_username ? ` @${comment.instagram_username}` : ''}님! 🔮\n\n${account.display_name} 보고서 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+      const dmMessage = getCronDmTemplate(account, comment.instagram_username, previewLinks);
 
       await graphApi.sendPrivateReply(comment.comment_id, dmMessage, account.instagram_access_token);
 
       try {
         await graphApi.replyToComment(
-          comment.comment_id,
-          `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`,
+          comment.media_id,
+          getCronReplyTemplate(account, comment.instagram_username),
           account.instagram_access_token
         );
       } catch {
-        // 대댓글 실패는 무시
+        // 댓글 실패는 무시
       }
 
       await supabase

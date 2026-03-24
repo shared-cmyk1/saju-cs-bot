@@ -7,6 +7,30 @@ import type { AccountConfig } from '@/app/lib/types';
 
 const anthropic = new Anthropic();
 
+function getAdminDmTemplate(account: Record<string, unknown>, username: string | null, previewLinks: string): string {
+  const name = username ? ` @${username}` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `안녕하세요${name}님! 💜\n\n운세저장소에서 미리보기 링크를 보내드려요!\n\n${previewLinks}\n\n링크를 눌러 나만의 운세를 확인해보세요 🔮`;
+    case 'saju_maeul':
+      return `안녕하세요${name}님! 🌙\n\n사주마을 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n아래 링크에서 사주 결과를 확인해보세요 ✨`;
+    default:
+      return `안녕하세요${name}님! 🔮\n\n${account.display_name} 보고서 미리보기 링크를 전달드립니다!\n\n${previewLinks}\n\n링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+  }
+}
+
+function getAdminReplyTemplate(account: Record<string, unknown>, username: string | null): string {
+  const mention = username ? `@${username} ` : '';
+  switch (account.slug) {
+    case 'unse_jeojangso':
+      return `${mention}💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
+    case 'saju_maeul':
+      return `${mention}🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
+    default:
+      return `${mention}✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
+  }
+}
+
 // 실패한 댓글들 재발송 (일회성 관리용)
 // GET /api/admin/retry-comments?token=WEBHOOK_VERIFY_TOKEN
 export async function GET(request: NextRequest) {
@@ -72,26 +96,20 @@ export async function GET(request: NextRequest) {
         .map((p) => `${p.title}: ${p.previewUrl}`)
         .join('\n');
 
-      const dmMessage = `안녕하세요${comment.instagram_username ? ` @${comment.instagram_username}` : ''}님! 🔮
-
-${account.display_name} 보고서 미리보기 링크를 전달드립니다!
-
-${previewLinks}
-
-링크를 눌러 나만의 사주 결과를 확인해보세요 ✨`;
+      const dmMessage = getAdminDmTemplate(account, comment.instagram_username, previewLinks);
 
       // Private Reply로 DM 발송
       await graphApi.sendPrivateReply(comment.comment_id, dmMessage, account.instagram_access_token);
 
-      // 대댓글
+      // 댓글
       try {
         await graphApi.replyToComment(
-          comment.comment_id,
-          `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`,
+          comment.media_id,
+          getAdminReplyTemplate(account, comment.instagram_username),
           account.instagram_access_token
         );
       } catch {
-        // 대댓글 실패는 무시
+        // 댓글 실패는 무시
       }
 
       // DB 업데이트
