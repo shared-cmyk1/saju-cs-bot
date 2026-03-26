@@ -25,13 +25,13 @@ export async function sendMessage(
   }
 }
 
-// Instagram 미디어에 댓글 달기 (대댓글 대체 - /{media_id}/comments 사용)
+// Instagram 댓글에 대댓글 달기 (/{comment_id}/replies)
 export async function replyToComment(
-  mediaId: string,
+  commentId: string,
   text: string,
   accessToken: string
 ): Promise<void> {
-  const response = await fetch(`${GRAPH_API_BASE}/${mediaId}/comments`, {
+  const response = await fetch(`${GRAPH_API_BASE}/${commentId}/replies`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

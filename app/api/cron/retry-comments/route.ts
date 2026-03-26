@@ -20,15 +20,14 @@ function getCronDmTemplate(account: Record<string, unknown>, username: string | 
 }
 
 // 계정별 대댓글 템플릿
-function getCronReplyTemplate(account: Record<string, unknown>, username: string | null): string {
-  const mention = username ? `@${username} ` : '';
+function getCronReplyTemplate(account: Record<string, unknown>): string {
   switch (account.slug) {
     case 'unse_jeojangso':
-      return `${mention}💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
+      return `💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
     case 'saju_maeul':
-      return `${mention}🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
+      return `🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
     default:
-      return `${mention}✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
+      return `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
   }
 }
 
@@ -136,8 +135,8 @@ export async function GET(request: NextRequest) {
 
       try {
         await graphApi.replyToComment(
-          comment.media_id,
-          getCronReplyTemplate(account, comment.instagram_username),
+          comment.comment_id,
+          getCronReplyTemplate(account),
           account.instagram_access_token
         );
       } catch {

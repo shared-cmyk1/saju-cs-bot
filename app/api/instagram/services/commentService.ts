@@ -83,15 +83,14 @@ function getDmTemplate(account: AccountConfig, username: string | undefined, pre
 }
 
 // 계정별 대댓글 템플릿
-function getCommentReplyTemplate(account: AccountConfig, username: string | undefined): string {
-  const mention = username ? `@${username} ` : '';
+function getCommentReplyTemplate(account: AccountConfig): string {
   switch (account.slug) {
     case 'unse_jeojangso':
-      return `${mention}💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
+      return `💜 DM으로 미리보기 링크 보내드렸어요! 확인해주세요 💌`;
     case 'saju_maeul':
-      return `${mention}🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
+      return `🌙 미리보기 링크를 DM으로 보내드렸습니다! 확인해주세요 ✨`;
     default:
-      return `${mention}✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
+      return `✨ 미리보기를 DM으로 전송드렸습니다! 확인해주세요 💌`;
   }
 }
 
@@ -193,12 +192,11 @@ export async function handleComment(
     // DM 발송 (Private Reply - 댓글 기반이라 24시간 제한 없음)
     await graphApi.sendPrivateReply(commentId, dmMessage, account.instagram_access_token);
 
-    // 미디어에 댓글 달기 (@멘션으로 대댓글 효과)
+    // 대댓글 달기
     try {
-      const replyText = getCommentReplyTemplate(account, username);
       await graphApi.replyToComment(
-        comment.media.id,
-        replyText,
+        commentId,
+        getCommentReplyTemplate(account),
         account.instagram_access_token
       );
     } catch (replyError) {
