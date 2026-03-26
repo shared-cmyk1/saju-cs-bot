@@ -188,48 +188,49 @@ export const messageService = {
       return;
     }
 
-    // 5. 이미 에스컬레이션 대기 중이면 Slack에 추가 메시지만 전달
-    const { data: pendingEscalation } = await supabase
-      .from('saju_cs_escalations')
-      .select('id')
-      .eq('conversation_id', conversation.id)
-      .eq('status', 'pending')
-      .maybeSingle();
+    // 5. Slack 에스컬레이션 (실패해도 영업시간 알림은 실행되어야 하므로 try-catch)
+    try {
+      const { data: pendingEscalation } = await supabase
+        .from('saju_cs_escalations')
+        .select('id')
+        .eq('conversation_id', conversation.id)
+        .eq('status', 'pending')
+        .maybeSingle();
 
-    if (pendingEscalation) {
-      await postFollowUpMessage({
-        channelId: account.slack_channel_id,
-        username: conversation.instagram_username,
-        userQuestion: messageText,
-        conversationId: conversation.id,
-        instagramUserId: instagramUserId,
-        accountId: account.id,
-      });
-    } else {
-      // 5. 승인된 자동 규칙 매칭 시도
-      const match = await matchRule(account.id, messageText);
-
-      if (match && match.rule.category === '결제오류_결과미수신') {
-        // 리포트 미수신 → 리포트 재발급 버튼만 있는 에스컬레이션
-        await postReissueEscalation({
-          accountId: account.id,
+      if (pendingEscalation) {
+        await postFollowUpMessage({
           channelId: account.slack_channel_id,
-          conversationId: conversation.id,
-          instagramUserId,
           username: conversation.instagram_username,
           userQuestion: messageText,
+          conversationId: conversation.id,
+          instagramUserId: instagramUserId,
+          accountId: account.id,
         });
       } else {
-        // 기타 모든 메시지 → Slack에 에스컬레이션
-        await postEscalation({
-          accountId: account.id,
-          channelId: account.slack_channel_id,
-          conversationId: conversation.id,
-          instagramUserId,
-          username: conversation.instagram_username,
-          userQuestion: messageText,
-        });
+        const match = await matchRule(account.id, messageText);
+
+        if (match && match.rule.category === '결제오류_결과미수신') {
+          await postReissueEscalation({
+            accountId: account.id,
+            channelId: account.slack_channel_id,
+            conversationId: conversation.id,
+            instagramUserId,
+            username: conversation.instagram_username,
+            userQuestion: messageText,
+          });
+        } else {
+          await postEscalation({
+            accountId: account.id,
+            channelId: account.slack_channel_id,
+            conversationId: conversation.id,
+            instagramUserId,
+            username: conversation.instagram_username,
+            userQuestion: messageText,
+          });
+        }
       }
+    } catch (escalationError) {
+      console.error('[MessageService] Escalation failed:', escalationError);
     }
 
     // 7. 업무 외 시간 → 안내 메시지 전송 (하루 1회)
